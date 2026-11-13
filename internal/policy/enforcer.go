@@ -173,6 +173,20 @@ func newEnforcer(home string, fold bool, ps ...*Policy) (*Enforcer, error) {
 // Active reports whether any policy is in force.
 func (e *Enforcer) Active() bool { return e != nil && len(e.layers) > 0 }
 
+// RestrictsReads reports whether any paths.deny or paths.deny_read rule is
+// in force, so callers can skip per-file CheckPath calls when none is.
+func (e *Enforcer) RestrictsReads() bool {
+	if e == nil {
+		return false
+	}
+	for _, l := range e.layers {
+		if len(l.deny) > 0 || len(l.denyRead) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Sources lists the policy files in force.
 func (e *Enforcer) Sources() []string {
 	if e == nil {
@@ -212,8 +226,9 @@ type ToolRequest struct {
 	Root string
 }
 
-// shellTools run their Command through a shell.
-var shellTools = map[string]bool{"bash": true}
+// shellTools run their Command through a shell: bash, and verify, which
+// runs the project's test command.
+var shellTools = map[string]bool{"bash": true, "verify": true}
 
 // RequestFor builds a ToolRequest from a prepared call and its raw input.
 // Reads take their path from the input's "path" field, since a read call

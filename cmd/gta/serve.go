@@ -115,7 +115,7 @@ func runServe(args []string) error {
 		return err
 	}
 
-	ci := startCodeIntel(cfg, root)
+	ci := startCodeIntel(cfg, root, gv.codeExclude(root))
 	defer ci.close()
 	shared := newToolset(cfg, root, ci.tools()...)
 	for _, n := range shared.notes {
@@ -153,6 +153,7 @@ func runServe(args []string) error {
 		if err != nil {
 			return nil, err
 		}
+		gv.guardEnv(env)
 		if c.ShellTimeout > 0 {
 			env.ShellTimeout = secondsDuration(c.ShellTimeout)
 		}

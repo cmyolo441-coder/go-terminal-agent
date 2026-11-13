@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
 	orgpolicy "github.com/cmyolo441-coder/go-terminal-agent/internal/policy"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/secrets"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/ui"
 )
 
@@ -130,6 +131,51 @@ func (g *governance) build(cfg config.Config, root, sessionID string) error {
 		fmt.Fprintln(os.Stderr, "gta:", w)
 	}
 	return nil
+}
+
+// hidden reports, for list_dir, glob and grep, whether the policy's path
+// rules deny reading a file. It is nil when no read rules are in force,
+// so walks pay nothing without them.
+func (g *governance) hidden(root string) func(abs string) bool {
+	if !g.policy.RestrictsReads() {
+		return nil
+	}
+	return func(abs string) bool { return !g.policy.CheckPath(abs, root, false).Allowed }
+}
+
+// codeExclude keeps files the policy denies reading out of the code index
+// (and so out of code_search, symbols, repo_map and the repository map).
+func (g *governance) codeExclude(root string) func(rel string, dir bool) bool {
+	h := g.hidden(root)
+	if h == nil {
+		return nil
+	}
+	return func(rel string, _ bool) bool { return h(filepath.Join(root, filepath.FromSlash(rel))) }
+}
+
+// checkCommand applies the policy's command rules to commands that run
+// outside the bash tool: the verify tool, /plan verification and
+// /fixtests. Denials are audited.
+func (g *governance) checkCommand(root string) func(string) error {
+	if !g.policy.Active() {
+		return nil
+	}
+	return func(cmd string) error {
+		d := g.policy.CheckCommand(cmd, root)
+		if d.Allowed {
+			return nil
+		}
+		if g.logger != nil {
+			_ = g.logger.Log(d.Record("test command"))
+		}
+		return errors.New(d.UserText())
+	}
+}
+
+// guardEnv installs the policy's path and command checks on env.
+func (g *governance) guardEnv(env *tools.Env) {
+	env.Hidden = g.hidden(env.Root)
+	env.CheckCommand = g.checkCommand(env.Root)
 }
 
 // attach installs governance on ag, including the policy's mode limit.

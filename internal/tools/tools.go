@@ -82,6 +82,14 @@ type Env struct {
 	// Wrap, when set, turns a shell command into the argv that runs it,
 	// for example inside a sandbox. An error means the command must not run.
 	Wrap func(shell, command string) ([]string, error)
+	// Hidden, when set, reports whether an absolute path must be left out
+	// of directory listings and searches (list_dir, glob, grep), for
+	// example because a managed policy denies reading it. Directories are
+	// asked too; a hidden directory is not descended into.
+	Hidden func(abs string) bool
+	// CheckCommand, when set, vets a command run outside the bash tool,
+	// such as a test command; an error means it must not run.
+	CheckCommand func(command string) error
 
 	mu       sync.Mutex
 	readMods map[string]time.Time
@@ -97,6 +105,27 @@ func NewEnv(root string) (*Env, error) {
 	}
 	return &Env{Root: abs, ShellTimeout: 2 * time.Minute, OutputLimit: 30000, readMods: map[string]time.Time{}}, nil
 }
+
+// Fork returns a new environment with e's settings (root, timeouts, the
+// sandbox Wrap, Hidden and CheckCommand) but its own read tracking and
+// task list, for a sub-agent.
+func (e *Env) Fork() *Env {
+	f := &Env{
+		Root: e.Root, ShellTimeout: 2 * time.Minute, OutputLimit: 30000,
+		Wrap: e.Wrap, Hidden: e.Hidden, CheckCommand: e.CheckCommand,
+		readMods: map[string]time.Time{},
+	}
+	if e.ShellTimeout > 0 {
+		f.ShellTimeout = e.ShellTimeout
+	}
+	if e.OutputLimit > 0 {
+		f.OutputLimit = e.OutputLimit
+	}
+	return f
+}
+
+// hidden reports whether p is hidden from listings and searches.
+func (e *Env) hidden(p string) bool { return e.Hidden != nil && e.Hidden(p) }
 
 // OnTodos registers a callback for task list updates.
 func (e *Env) OnTodos(f func([]Todo)) {

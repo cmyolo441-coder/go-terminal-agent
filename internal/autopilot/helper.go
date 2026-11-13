@@ -79,17 +79,9 @@ type helper struct {
 }
 
 func newHelper(c helperConfig) (*helper, error) {
-	env, err := tools.NewEnv(c.baseEnv.Root)
-	if err != nil {
-		return nil, fmt.Errorf("%s agent environment: %w", c.phase, err)
-	}
-	// A fresh Env gives the helper its own read tracking and task list.
-	if c.baseEnv.ShellTimeout > 0 {
-		env.ShellTimeout = c.baseEnv.ShellTimeout
-	}
-	if c.baseEnv.OutputLimit > 0 {
-		env.OutputLimit = c.baseEnv.OutputLimit
-	}
+	// A forked Env gives the helper its own read tracking and task list,
+	// with the base environment's sandbox and policy hooks.
+	env := c.baseEnv.Fork()
 	gate := permission.NewGate(permission.ModePlan, nil)
 	a := agent.New(c.provider, c.registry, env, gate, c.system, c.settings)
 	if c.setup != nil {

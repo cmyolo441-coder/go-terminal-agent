@@ -207,6 +207,10 @@ func (ix *Index) loadCache() {
 	}
 	all := make(map[string]*fileEntry, len(cp.Files))
 	for _, e := range cp.Files {
+		// The cache may predate Exclude (a policy installed since).
+		if ix.excluded(e.Path, false) {
+			continue
+		}
 		ix.intern.internEntry(e)
 		all[e.Path] = e
 	}

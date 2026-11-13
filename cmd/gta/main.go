@@ -175,6 +175,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	gv.guardEnv(env)
 	if cfg.ShellTimeout > 0 {
 		env.ShellTimeout = secondsDuration(cfg.ShellTimeout)
 	}
@@ -221,7 +222,7 @@ func run(args []string) error {
 		return err
 	}
 	system := prompt.Build(root)
-	ci := startCodeIntel(cfg, root)
+	ci := startCodeIntel(cfg, root, gv.codeExclude(root))
 	defer ci.close()
 	if m := ci.systemPrompt(); m != "" {
 		system += "\n\n" + m

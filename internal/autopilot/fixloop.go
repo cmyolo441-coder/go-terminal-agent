@@ -281,7 +281,7 @@ func (l *fixLoop) test(ctx context.Context, it int) (*TestRun, error) {
 	if f := l.cfg.Callbacks.TestStart; f != nil {
 		f(it, l.tc)
 	}
-	tr, err := RunTests(ctx, l.root, l.tc, RunOptions{Timeout: l.cfg.Timeout, Wrap: l.cfg.Agent.Env.Wrap})
+	tr, err := RunTests(ctx, l.root, l.tc, RunOptions{Timeout: l.cfg.Timeout, Wrap: l.cfg.Agent.Env.Wrap, Check: l.cfg.Agent.Env.CheckCommand})
 	if tr != nil {
 		l.rep.TestTime += tr.Duration
 	}

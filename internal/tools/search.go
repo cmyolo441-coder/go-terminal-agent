@@ -81,8 +81,11 @@ func (ListDir) Prepare(env *Env, raw json.RawMessage) (*Call, error) {
 					b.WriteString(indent + "… (listing truncated)\n")
 					return nil
 				}
-				count++
 				name := e.Name()
+				if env.hidden(filepath.Join(dir, name)) {
+					continue
+				}
+				count++
 				if e.IsDir() {
 					b.WriteString(indent + name + "/\n")
 					if skipDir[name] {
@@ -167,7 +170,7 @@ func (Glob) Prepare(env *Env, raw json.RawMessage) (*Call, error) {
 			}
 			rel, _ := filepath.Rel(base, p)
 			rel = filepath.ToSlash(rel)
-			if ok, _ := doublestar.Match(in.Pattern, rel); ok {
+			if ok, _ := doublestar.Match(in.Pattern, rel); ok && !env.hidden(p) {
 				var mod int64
 				if info, err := d.Info(); err == nil {
 					mod = info.ModTime().UnixNano()
@@ -277,6 +280,9 @@ func grep(ctx context.Context, env *Env, base string, re *regexp.Regexp, in grep
 	results, files, total := 0, 0, 0
 	limited := false
 	searchFile := func(p string) error {
+		if env.hidden(p) {
+			return nil
+		}
 		info, err := os.Stat(p)
 		if err != nil || info.Size() > maxGrepFile {
 			return nil

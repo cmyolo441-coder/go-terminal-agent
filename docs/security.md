@@ -92,7 +92,8 @@ with a new PID namespace, a fresh `/tmp`, and a new network namespace when netwo
 sandbox is configured but cannot run, GTA refuses to start. `/sandbox` shows
 the active setup.
 
-The sandbox covers `bash`, the `verify` tool, `/fixtests` and `!command`.
+The sandbox covers `bash`, the `verify` tool, `/fixtests` and `!command`,
+in `task` sub-agents and `/plan` helpers too.
 It does **not** cover hooks, MCP servers, plugin tools and commands, or
 language servers.
 
@@ -123,7 +124,7 @@ admit. Deny wins over allow.
 | `version` | int | Required, must be `1`. |
 | `message` | string | Shown with every denial (for example where to ask for an exception). |
 | `tools.allow` / `tools.deny` | string[] | Tool names with `*` and `?` wildcards, including `mcp__server__tool` and `plugin__name__tool`. With an allow list, every other tool is refused (built-ins included). |
-| `commands.allow` / `commands.deny` | string[] | Patterns for each simple command the `bash` tool would run. See below. |
+| `commands.allow` / `commands.deny` | string[] | Patterns for each simple command that `bash`, the `verify` tool, `/plan`'s test run or `/fixtests` would run. See below. |
 | `paths.deny` | string[] | Paths no tool may read or write. |
 | `paths.deny_read` | string[] | Paths no tool may read. |
 | `paths.deny_write` | string[] | Paths no tool may write. |
@@ -197,7 +198,13 @@ command are also checked against the path rules.
 
 The checked path is the tool call's target, or the `path` / `file_path`
 field of its input (this also covers MCP and plugin tools that use those
-names).
+names). Read rules (`paths.deny`, `paths.deny_read`) are also applied to
+every file and directory `grep`, `glob` and `list_dir` walk, so denied
+files are left out of their results, and to the code index, so denied
+files are never indexed and cannot appear in `code_search`, `symbols`,
+`repo_map` or the repository map in the system prompt. A denied directory
+is skipped as a whole. Without read rules these per-file checks are not
+installed and cost nothing.
 
 ### Examples
 
@@ -414,13 +421,13 @@ GTA assumes the person running it is trusted, and protects them from:
   user can, inside or outside the workspace, and `cat`/`head`/`tail` are in
   the default `allow_commands`. Only policy `paths.deny` /
   `paths.deny_read` stop this, and only for the checked path of a call.
-- **Directory-walking tools are not checked per file.** `grep`, `glob`,
-  `list_dir`, `code_search`, `symbols` and `repo_map` check only the path
-  argument, so a denied file under a searched directory can still appear in
-  results. The code index also indexes denied workspace files.
-- **Policy command rules apply to `bash` only.** They do not cover the
-  `verify` tool's test command, `/fixtests`, hooks, MCP servers, plugin
-  tools or language servers.
+- **Path rules cover GTA's own tools only.** A file read rule hides the
+  file from `read_file`, `grep`, `glob`, `list_dir` and the code index, but
+  not from programs a command runs (`bash`'s `cat` is checked only by its
+  arguments), MCP servers, plugins, hooks or language servers.
+- **Policy command rules do not cover hooks, MCP servers, plugin tools or
+  language servers.** They cover `bash`, the `verify` tool, `/plan`'s test
+  run and `/fixtests`, but not `!command` lines typed by the user.
 - **Command parsing is best effort.** Rules match program names after
   unwrapping, not behaviour: a program can be copied or renamed, or a
   script written and run. Use `commands.allow` plus the sandbox for strong

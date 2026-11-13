@@ -694,3 +694,29 @@ func TestSpecAndHelpers(t *testing.T) {
 		t.Fatalf("summary %q", got)
 	}
 }
+
+// A general child runs shell commands, so it must keep the parent's sandbox
+// wrapper and policy hooks.
+func TestChildKeepsSandboxAndPolicyHooks(t *testing.T) {
+	env := newEnv(t)
+	wrapped := false
+	env.Wrap = func(shell, command string) ([]string, error) { wrapped = true; return nil, errors.New("sandboxed") }
+	env.Hidden = func(string) bool { return true }
+	env.CheckCommand = func(string) error { return nil }
+	tool := New(baseConfig(scripted(nil)))
+	b := &batch{tool: tool, env: env, mode: ModeGeneral, settings: tool.settings(), total: 1, gate: permission.NewGate(permission.ModeYolo, nil)}
+	child, err := b.newChild(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Env.Hidden == nil || child.Env.CheckCommand == nil || child.Env.Wrap == nil {
+		t.Fatal("child environment lost the policy hooks or the sandbox")
+	}
+	call, err := (tools.Bash{}).Prepare(child.Env, json.RawMessage(`{"command":"echo hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call.Run(context.Background()); err == nil || !wrapped {
+		t.Fatalf("child bash bypassed the sandbox: err %v", err)
+	}
+}

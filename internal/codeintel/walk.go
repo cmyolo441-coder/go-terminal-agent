@@ -20,6 +20,7 @@ const (
 	SkipVendored  = "vendored"
 	SkipError     = "error"
 	SkipLimit     = "file-limit"
+	SkipExcluded  = "excluded"
 )
 
 // vendorDirs are dependency, cache and tool directories that never hold
@@ -227,6 +228,10 @@ func (ix *Index) readDir(rel string, ig *Ignorer) ([]string, *Ignorer, []walkFil
 				skipped[SkipIgnored]++
 				continue
 			}
+			if ix.excluded(childRel, true) {
+				skipped[SkipExcluded]++
+				continue
+			}
 			dirs = append(dirs, childRel)
 		case typ.IsRegular():
 			if name == ".git" {
@@ -234,6 +239,10 @@ func (ix *Index) readDir(rel string, ig *Ignorer) ([]string, *Ignorer, []walkFil
 			}
 			if ig.Match(childRel, false) {
 				skipped[SkipIgnored]++
+				continue
+			}
+			if ix.excluded(childRel, false) {
+				skipped[SkipExcluded]++
 				continue
 			}
 			if binaryExt[strings.ToLower(path.Ext(name))] || binaryExt[name] {
@@ -257,6 +266,11 @@ func (ix *Index) readDir(rel string, ig *Ignorer) ([]string, *Ignorer, []walkFil
 		}
 	}
 	return dirs, ig, files, skipped
+}
+
+// excluded asks Options.Exclude about a slash-separated relative path.
+func (ix *Index) excluded(rel string, dir bool) bool {
+	return ix.opts.Exclude != nil && ix.opts.Exclude(rel, dir)
 }
 
 // pathExcluded applies the walker's rules to a single path, loading the
@@ -286,11 +300,11 @@ func (ix *Index) pathExcluded(rel string) bool {
 		}
 		last := i == len(parts)-1
 		if !last {
-			if vendorDirs[p] || isOutputDir(p, siblings) || ig.Match(cur, true) {
+			if vendorDirs[p] || isOutputDir(p, siblings) || ig.Match(cur, true) || ix.excluded(cur, true) {
 				return true
 			}
 		} else {
-			if p == ".git" || ig.Match(cur, false) || binaryExt[strings.ToLower(path.Ext(p))] {
+			if p == ".git" || ig.Match(cur, false) || ix.excluded(cur, false) || binaryExt[strings.ToLower(path.Ext(p))] {
 				return true
 			}
 			if !ix.opts.IncludeGenerated && isGeneratedName(p) {

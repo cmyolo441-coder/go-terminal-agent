@@ -215,19 +215,11 @@ func (b *batch) runChild(ctx context.Context, idx int, tk Task) (res Result) {
 
 // newChild builds a child agent with its own environment, tools and gate.
 func (b *batch) newChild(idx int) (*agent.Agent, error) {
-	env, err := tools.NewEnv(b.env.Root)
-	if err != nil {
-		return nil, fmt.Errorf("sub-agent environment: %w", err)
-	}
-	// A fresh Env gives the child its own read tracking (so it must read a
+	// A forked Env gives the child its own read tracking (so it must read a
 	// file before editing it, even if the parent or a sibling already did)
-	// and its own task list, which never overwrites the parent's.
-	if b.env.ShellTimeout > 0 {
-		env.ShellTimeout = b.env.ShellTimeout
-	}
-	if b.env.OutputLimit > 0 {
-		env.OutputLimit = b.env.OutputLimit
-	}
+	// and its own task list, which never overwrites the parent's, while
+	// keeping the parent's sandbox and policy hooks.
+	env := b.env.Fork()
 	var (
 		reg  *tools.Registry
 		gate *permission.Gate

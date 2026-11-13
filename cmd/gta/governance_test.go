@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,9 +9,91 @@ import (
 	"testing"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/audit"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/codeintel"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
 	orgpolicy "github.com/cmyolo441-coder/go-terminal-agent/internal/policy"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 )
+
+// Policy path rules reach the directory-walking tools and the code index,
+// and command rules reach test commands run outside the bash tool.
+func TestPolicyGuardsWalksIndexAndTestCommands(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"main.go":             "package demo\n\nfunc VisibleThing() {} // needle\n",
+		".env":                "TOKEN=needle\n",
+		"secrets/keys.go":     "package secrets\n\nfunc SecretKeys() {} // needle\n",
+		"secrets/sub/deep.go": "package sub\n\nfunc DeepSecret() {}\n",
+	}
+	for name, body := range files {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pol := map[string]any{
+		"version":  1,
+		"paths":    map[string]any{"deny": []string{".env"}, "deny_read": []string{"secrets"}},
+		"commands": map[string]any{"deny": []string{"make"}},
+		"audit":    map[string]any{"dir": t.TempDir()},
+	}
+	cfg := config.Default()
+	cfg.AuditLog = true
+	g := testGovernance(t, pol, cfg)
+	defer g.close()
+
+	env, err := tools.NewEnv(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.guardEnv(env)
+	for _, c := range []struct {
+		tool  tools.Tool
+		input string
+	}{
+		{tools.Grep{}, `{"pattern":"needle"}`},
+		{tools.Glob{}, `{"pattern":"**/*"}`},
+		{tools.ListDir{}, `{"depth":5}`},
+	} {
+		call, err := c.tool.Prepare(env, json.RawMessage(c.input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := call.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, ".env") || strings.Contains(out, "secrets") || !strings.Contains(out, "main.go") {
+			t.Errorf("%s revealed a denied path or lost main.go:\n%s", c.tool.Spec().Name, out)
+		}
+	}
+
+	cfg.LSP = false
+	ci := startCodeIntel(cfg, root, g.codeExclude(root))
+	defer ci.close()
+	if m := ci.systemPrompt(); strings.Contains(m, "secrets") || !strings.Contains(m, "main.go") {
+		t.Errorf("repository map reveals denied files:\n%s", m)
+	}
+	ms, err := ci.ix.Symbols(context.Background(), codeintel.SymbolQuery{Name: "SecretKeys"})
+	if err != nil || len(ms) != 0 {
+		t.Errorf("symbols found a denied file: %v %v", ms, err)
+	}
+
+	if err := env.CheckCommand("make test"); err == nil || !strings.Contains(err.Error(), "denied by policy") {
+		t.Errorf("make test allowed: %v", err)
+	}
+	if err := env.CheckCommand("go test ./..."); err != nil {
+		t.Errorf("go test denied: %v", err)
+	}
+
+	// Without read rules no per-file check is installed.
+	g2 := testGovernance(t, map[string]any{"version": 1, "audit": map[string]any{"dir": t.TempDir()}}, cfg)
+	defer g2.close()
+	if g2.hidden(root) != nil || g2.codeExclude(root) != nil {
+		t.Error("per-file path checks installed without read rules")
+	}
+}
 
 // testGovernance builds governance from a policy (nil for none) and cfg,
 // writing a few records to the audit log.

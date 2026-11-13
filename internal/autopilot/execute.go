@@ -234,7 +234,7 @@ func (rn *run) runVerifyTests(ctx context.Context) (*TestRun, error) {
 		}
 		tc = c
 	}
-	tr, err := RunTests(ctx, rn.root, tc, RunOptions{Timeout: rn.cfg.TestTimeout, Wrap: rn.cfg.Executor.Env.Wrap})
+	tr, err := RunTests(ctx, rn.root, tc, RunOptions{Timeout: rn.cfg.TestTimeout, Wrap: rn.cfg.Executor.Env.Wrap, Check: rn.cfg.Executor.Env.CheckCommand})
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

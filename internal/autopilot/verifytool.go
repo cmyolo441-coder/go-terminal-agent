@@ -127,10 +127,10 @@ func (t *VerifyTool) Prepare(env *tools.Env, raw json.RawMessage) (*tools.Call, 
 	}
 	summary := "Verify: " + tc.String()
 	budget := t.cfg.Budget
-	wrap := env.Wrap
+	wrap, check := env.Wrap, env.CheckCommand
 	root := env.Root
 	run := func(ctx context.Context) (string, error) {
-		tr, err := RunTests(ctx, root, tc, RunOptions{Timeout: timeout, Wrap: wrap})
+		tr, err := RunTests(ctx, root, tc, RunOptions{Timeout: timeout, Wrap: wrap, Check: check})
 		if err != nil {
 			if tr != nil && ctx.Err() == nil {
 				return tr.Report(budget), err

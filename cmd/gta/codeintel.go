@@ -35,7 +35,7 @@ type codeIntel struct {
 
 // startCodeIntel opens the index and the language server manager that cfg
 // asks for. Failures turn the part off with a note; they never stop GTA.
-func startCodeIntel(cfg config.Config, root string) *codeIntel {
+func startCodeIntel(cfg config.Config, root string, exclude func(rel string, dir bool) bool) *codeIntel {
 	c := &codeIntel{budget: cfg.RepoMapBudget}
 	if cfg.CodeIndex {
 		ix, err := codeintel.Open(codeintel.Options{
@@ -43,6 +43,7 @@ func startCodeIntel(cfg config.Config, root string) *codeIntel {
 			CacheDir:    filepath.Join(config.UserDir(), "index"),
 			MaxFileSize: cfg.CodeIndexMaxFileSize,
 			ExtraIgnore: cfg.CodeIndexIgnore,
+			Exclude:     exclude,
 		})
 		if err != nil {
 			c.notes = append(c.notes, "code index off: "+err.Error())

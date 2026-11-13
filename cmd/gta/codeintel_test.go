@@ -31,7 +31,7 @@ func TestCodeIntelWiring(t *testing.T) {
 	cfg := config.Default()
 	// A server that is not installed: LSP stays quiet instead of failing.
 	cfg.LSPServers = []lsp.ServerConfig{{Name: "gopls", Command: "gta-no-such-gopls", Extensions: []string{".go"}}}
-	ci := startCodeIntel(cfg, root)
+	ci := startCodeIntel(cfg, root, nil)
 	defer ci.close()
 
 	names := map[string]bool{}
@@ -78,7 +78,7 @@ func TestCodeIntelWiring(t *testing.T) {
 func TestCodeIntelOff(t *testing.T) {
 	cfg := config.Default()
 	cfg.CodeIndex, cfg.LSP = false, false
-	ci := startCodeIntel(cfg, t.TempDir())
+	ci := startCodeIntel(cfg, t.TempDir(), nil)
 	defer ci.close()
 	if len(ci.tools()) != 0 || ci.systemPrompt() != "" {
 		t.Fatal("parts that are off must add nothing")
@@ -106,7 +106,7 @@ func TestCodeIntelLiveDiagnostics(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.LSPDiagnosticsWaitMs = 20000
-	ci := startCodeIntel(cfg, root)
+	ci := startCodeIntel(cfg, root, nil)
 	defer ci.close()
 	path := filepath.Join(root, "app.py")
 	if err := os.WriteFile(path, []byte("def add(a: int, b: int) -> int:\n    return a + b\n\nx: str = add(1, 2)\n"), 0o644); err != nil {

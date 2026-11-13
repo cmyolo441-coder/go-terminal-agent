@@ -54,6 +54,11 @@ type Options struct {
 	SkipGlobalGitignore bool
 	// ExtraIgnore are additional gitignore patterns relative to Root.
 	ExtraIgnore []string
+	// Exclude, when set, leaves out paths it returns true for, for example
+	// files a managed policy denies reading. It gets slash-separated paths
+	// relative to Root, directories too (an excluded directory is not
+	// descended into), and must be safe for concurrent use.
+	Exclude func(rel string, dir bool) bool
 	// RefreshInterval is how stale the index may get before a query
 	// re-scans the tree (default 15s). Zero uses the default; a negative
 	// value re-scans before every query.

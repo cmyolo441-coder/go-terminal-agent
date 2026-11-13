@@ -35,6 +35,10 @@ type RunOptions struct {
 	// Wrap, when set, turns the shell command into the argv that runs it,
 	// for example inside a sandbox (normally tools.Env.Wrap).
 	Wrap func(shell, command string) ([]string, error)
+	// Check, when set, vets the command before it runs (normally
+	// tools.Env.CheckCommand, the managed policy's command rules); an error
+	// means it must not run.
+	Check func(command string) error
 	// MaxOutput caps buffered output; zero means DefaultMaxTestOutput.
 	MaxOutput int
 	// Env adds environment variables (KEY=value).
@@ -129,6 +133,11 @@ func RunTests(ctx context.Context, root string, tc TestCommand, opts RunOptions)
 	dir := root
 	if tc.Dir != "" {
 		dir = filepath.Join(root, tc.Dir)
+	}
+	if opts.Check != nil {
+		if err := opts.Check(tc.Command); err != nil {
+			return nil, err
+		}
 	}
 	argv, err := shellArgv(tc.Command, opts.Wrap)
 	if err != nil {
