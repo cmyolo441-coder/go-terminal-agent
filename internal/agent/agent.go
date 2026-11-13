@@ -18,6 +18,7 @@ import (
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/policy"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/pricing"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/telemetry"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 )
 
@@ -59,7 +60,11 @@ type Agent struct {
 	// Nil means no hooks.
 	Hooks *hooks.Runner
 	// Gov enforces policy, audit, secret redaction and budgets; nil is off.
-	Gov *Governance
+	// Tel traces turns and tool calls; nil is off.
+	Tel *telemetry.Telemetry
+	// SessionID labels telemetry.
+	SessionID string
+	Gov       *Governance
 	// BeforeWrite, when set, is called before any file-changing tool runs,
 	// for example to checkpoint the files it is about to touch.
 	BeforeWrite func(call *tools.Call)
@@ -283,6 +288,8 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 		}
 	}
 	a.appendUser(blocks)
+	ctx, span := a.Tel.StartAgent(ctx, "gta", a.SessionID)
+	defer span.End()
 	a.mu.Lock()
 	a.active = sink
 	a.mu.Unlock()
@@ -515,7 +522,16 @@ func (a *Agent) execute(ctx context.Context, p *prepared, sink Sink) {
 	}
 	sink.ToolStart(p.use.ToolUseID, p.call)
 	start := time.Now()
-	output, err := p.call.Run(ctx)
+	tctx, tspan := a.Tel.StartTool(ctx, p.use.ToolName, p.use.ToolUseID)
+	output, err := p.call.Run(tctx)
+	switch {
+	case ctx.Err() != nil:
+		tspan.End(telemetry.OutcomeCancelled, err)
+	case err != nil:
+		tspan.End(telemetry.OutcomeError, err)
+	default:
+		tspan.End(telemetry.OutcomeSuccess, nil)
+	}
 	a.Gov.log(audit.ToolCall(p.use.ToolName, p.use.ToolUseID, p.call.Kind.String(), p.use.Input, p.decision, time.Since(start), err))
 	sink.ToolDone(p.use.ToolUseID, p.call, output, err)
 	text := output

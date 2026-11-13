@@ -16,6 +16,7 @@ import (
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/sandbox"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/telemetry"
 )
 
 // DefaultModel is the model used when none is configured.
@@ -83,9 +84,40 @@ type Config struct {
 	RedactSecrets bool     `json:"redact_secrets"`
 	SecretsAllow  []string `json:"secrets_allow,omitempty"`
 
+	// FallbackModels are tried in order when the main model fails with a
+	// retryable error (rate limit, overload, outage) or is unavailable.
+	FallbackModels []FallbackModel `json:"fallback_models,omitempty"`
+	// Routing tunes retries, backoff and circuit breakers.
+	Routing Routing `json:"routing"`
+	// Telemetry exports OpenTelemetry traces and metrics.
+	Telemetry telemetry.Config `json:"telemetry"`
+
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
 	IgnoredProjectHooks bool `json:"-"`
+}
+
+// FallbackModel is one entry of fallback_models.
+type FallbackModel struct {
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	MaxTokens int64  `json:"max_tokens,omitempty"`
+	// RPM and TPM cap requests and tokens per minute on this route.
+	RPM int `json:"rpm,omitempty"`
+	TPM int `json:"tpm,omitempty"`
+}
+
+// Routing tunes how model calls are retried and routed.
+type Routing struct {
+	MaxRetries           int  `json:"max_retries,omitempty"`
+	FirstTokenTimeoutSec int  `json:"first_token_timeout_sec,omitempty"`
+	MaxRateWaitSec       int  `json:"max_rate_wait_sec,omitempty"`
+	BreakerFailures      int  `json:"breaker_failures,omitempty"`
+	BreakerCooldownSec   int  `json:"breaker_cooldown_sec,omitempty"`
+	RetryAfterStream     bool `json:"retry_after_stream,omitempty"`
+	// RPM and TPM cap the main model's requests and tokens per minute.
+	RPM int `json:"rpm,omitempty"`
+	TPM int `json:"tpm,omitempty"`
 }
 
 // Default returns the built-in settings.
@@ -229,6 +261,17 @@ func applyEnv(cfg *Config) {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Model) == "" {
 		return fmt.Errorf("config: model is empty")
+	}
+	for i, f := range c.FallbackModels {
+		if strings.TrimSpace(f.Model) == "" {
+			return fmt.Errorf("config: fallback_models[%d]: model is empty", i)
+		}
+		if p := f.Provider; p != "" && p != "anthropic" && !ValidProvider(p) {
+			return fmt.Errorf("config: fallback_models[%d]: unknown provider %q (one of %s)", i, p, strings.Join(Providers(), ", "))
+		}
+	}
+	if err := c.Telemetry.Validate(); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	if err := c.Budget.Validate(); err != nil {
 		return fmt.Errorf("config: budget: %w", err)

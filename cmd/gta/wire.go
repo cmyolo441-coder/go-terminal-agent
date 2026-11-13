@@ -43,6 +43,7 @@ func buildProvider(cfg *config.Config, modelSet, maxTokensSet bool) (llm.Provide
 			WebFetch:   cfg.WebFetch,
 			Compaction: cfg.Compaction,
 			Fallbacks:  cfg.Fallbacks,
+			MaxRetries: routerRetries(*cfg),
 		})
 		return p, authHint(), nil
 	}
@@ -52,6 +53,9 @@ func buildProvider(cfg *config.Config, modelSet, maxTokensSet bool) (llm.Provide
 	}
 	if cfg.BaseURL != "" {
 		opts.BaseURL = cfg.BaseURL
+	}
+	if n := routerRetries(*cfg); n != 0 {
+		opts.MaxRetries = n
 	}
 	if !modelSet && strings.HasPrefix(cfg.Model, "claude-") {
 		known := openai.KnownModels(cfg.Provider)
@@ -72,6 +76,15 @@ func buildProvider(cfg *config.Config, modelSet, maxTokensSet bool) (llm.Provide
 		hint = err.Error()
 	}
 	return p, hint, nil
+}
+
+// routerRetries is -1 (provider retries off) when a router with fallback
+// models does the retrying, so retries are not stacked.
+func routerRetries(cfg config.Config) int {
+	if len(cfg.FallbackModels) > 0 {
+		return -1
+	}
+	return 0
 }
 
 // buildSandbox installs the shell sandbox on env. It fails closed: when a

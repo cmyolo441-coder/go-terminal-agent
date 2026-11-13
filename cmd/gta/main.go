@@ -153,6 +153,15 @@ func run(args []string) error {
 	if err := gv.checkModel(cfg); err != nil {
 		return err
 	}
+	tel, err := startTelemetry(cfg)
+	if err != nil {
+		return err
+	}
+	defer shutdownTelemetry(tel)
+	provider, rt, err := buildRouting(cfg, provider, tel, gv.checkProviderModel)
+	if err != nil {
+		return err
+	}
 	policy, err := buildSandbox(cfg, env)
 	if err != nil {
 		return err
@@ -205,6 +214,12 @@ func run(args []string) error {
 	})
 	ag.Hooks = hookRunner
 	gv.attach(ag)
+	ag.Tel, ag.SessionID = tel, sess.ID
+	rt.setNotify(func(msg string) {
+		if s := ag.ActiveSink(); s != nil {
+			s.Notice(msg)
+		}
+	})
 	ts.ag = ag
 	addTaskTool(ag, cfg, root, ts)
 	cp, cpErr := setupCheckpoints(ag, sess.ID)
@@ -221,6 +236,7 @@ func run(args []string) error {
 	registerGovernanceCommands(gv)
 	registerAutopilotCommands(ag, cfg, root)
 	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts, gv: gv}
+	caps.extra = append(caps.extra, rt.capabilities)
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}

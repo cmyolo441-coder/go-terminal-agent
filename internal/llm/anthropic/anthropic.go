@@ -31,7 +31,9 @@ type Options struct {
 	// Compaction enables server-side context compaction for long sessions.
 	Compaction bool
 	// Fallbacks enables server-side refusal fallbacks ("default" routing).
-	Fallbacks  bool
+	Fallbacks bool
+	// MaxRetries overrides the SDK's retry count; negative disables
+	// retries.
 	MaxRetries int
 }
 
@@ -50,8 +52,9 @@ func New(opts Options) *Provider {
 	if opts.BaseURL != "" {
 		ro = append(ro, option.WithBaseURL(opts.BaseURL))
 	}
-	if opts.MaxRetries > 0 {
-		ro = append(ro, option.WithMaxRetries(opts.MaxRetries))
+	if opts.MaxRetries != 0 {
+		// Negative disables the SDK's retries (a router retries instead).
+		ro = append(ro, option.WithMaxRetries(max(0, opts.MaxRetries)))
 	}
 	return &Provider{client: anthropic.NewClient(ro...), opts: opts}
 }
@@ -342,23 +345,34 @@ func FromMessage(acc anthropic.BetaMessage) (*llm.Response, error) {
 }
 
 // describeError turns SDK errors into short, actionable messages.
+// apiError is a readable message for an API error that keeps the SDK error
+// reachable through errors.As, so retry and fallback logic can inspect it.
+type apiError struct {
+	msg string
+	err error
+}
+
+func (e *apiError) Error() string { return e.msg }
+func (e *apiError) Unwrap() error { return e.err }
+
 func describeError(err error) error {
 	var apierr *anthropic.Error
 	if errors.As(err, &apierr) {
+		wrap := func(format string, args ...any) error { return &apiError{msg: fmt.Sprintf(format, args...), err: err} }
 		switch apierr.StatusCode {
 		case 401:
-			return fmt.Errorf("authentication failed (401): set ANTHROPIC_API_KEY or run `ant auth login`")
+			return wrap("authentication failed (401): set ANTHROPIC_API_KEY or run `ant auth login`")
 		case 403:
-			return fmt.Errorf("permission denied (403): %s", oneLine(apierr.Error()))
+			return wrap("permission denied (403): %s", oneLine(apierr.Error()))
 		case 404:
-			return fmt.Errorf("not found (404), check the model name: %s", oneLine(apierr.Error()))
+			return wrap("not found (404), check the model name: %s", oneLine(apierr.Error()))
 		case 429:
-			return fmt.Errorf("rate limited (429) after retries, try again shortly")
+			return wrap("rate limited (429) after retries, try again shortly")
 		case 400:
-			return fmt.Errorf("request rejected (400): %s", oneLine(apierr.Error()))
+			return wrap("request rejected (400): %s", oneLine(apierr.Error()))
 		}
 		if apierr.StatusCode >= 500 {
-			return fmt.Errorf("Claude API server error (%d), try again", apierr.StatusCode)
+			return wrap("Claude API server error (%d), try again", apierr.StatusCode)
 		}
 	}
 	if errors.Is(err, context.Canceled) {

@@ -57,6 +57,14 @@ func (g *governance) checkModel(cfg config.Config) error {
 	return nil
 }
 
+// checkProviderModel vets a provider and model against the policy.
+func (g *governance) checkProviderModel(provider, model string) error {
+	if d := g.policy.CheckModel(provider, model); !d.Allowed {
+		return fmt.Errorf("managed policy: %s", d.UserText())
+	}
+	return nil
+}
+
 // build opens the audit log and builds the redactor and budget tracker.
 func (g *governance) build(cfg config.Config, root, sessionID string) error {
 	gov := &agent.Governance{Policy: g.policy, ProviderName: cfg.Provider}

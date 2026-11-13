@@ -87,6 +87,14 @@ func runServe(args []string) error {
 	if err := gv.checkModel(cfg); err != nil {
 		return err
 	}
+	tel, err := startTelemetry(cfg)
+	if err != nil {
+		return err
+	}
+	defer shutdownTelemetry(tel)
+	if prov, _, err = buildRouting(cfg, prov, tel, gv.checkProviderModel); err != nil {
+		return err
+	}
 	if err := gv.build(cfg, root, "serve"); err != nil {
 		return err
 	}
@@ -151,6 +159,7 @@ func runServe(args []string) error {
 		}
 		ag.Hooks = hk
 		gv.attach(ag)
+		ag.Tel = tel
 		ts.ag = ag
 		addTaskTool(ag, c, root, ts)
 		return ag, nil
