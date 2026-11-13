@@ -82,7 +82,35 @@ func parseFlags(args []string) (flags, []string, error) {
 	if err := fs.Parse(args); err != nil {
 		return f, nil, err
 	}
-	return f, fs.Args(), nil
+	// Flags may also follow the prompt (gta -p "do x" --json): an argument
+	// that names a gta flag is parsed as one; anything else, and everything
+	// after "--", is prompt text.
+	var rest []string
+	for args = fs.Args(); len(args) > 0; {
+		a := args[0]
+		if a == "--" {
+			rest = append(rest, args[1:]...)
+			break
+		}
+		name, hasValue := strings.TrimLeft(a, "-"), false
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name, hasValue = name[:i], true
+		}
+		fl := fs.Lookup(name)
+		if !strings.HasPrefix(a, "-") || name == "" || fl == nil {
+			rest, args = append(rest, a), args[1:]
+			continue
+		}
+		n := 2
+		if b, ok := fl.Value.(interface{ IsBoolFlag() bool }); hasValue || (ok && b.IsBoolFlag()) {
+			n = 1
+		}
+		if err := fs.Parse(args[:min(n, len(args))]); err != nil {
+			return f, nil, err
+		}
+		args = args[min(n, len(args)):]
+	}
+	return f, rest, nil
 }
 
 func main() {

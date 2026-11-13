@@ -117,7 +117,14 @@ func (g *Governance) beforeModel(req *llm.Request, contextTokens int64, sink Sin
 	if g.Redactor != nil {
 		msgs, rep := g.Redactor.RedactMessages(req.Messages)
 		req.Messages = msgs
-		if n := rep.Count(); n > 0 {
+		n := rep.Count()
+		// The system prompt carries memory files (AGENTS.md, CLAUDE.md)
+		// and hook output, which can hold secrets too.
+		if sys, fs := g.Redactor.Redact(req.System); len(fs) > 0 {
+			req.System = sys
+			n += len(fs)
+		}
+		if n > 0 {
 			g.mu.Lock()
 			first := g.redacted == 0
 			g.redacted += n
