@@ -65,7 +65,21 @@ your shell (no fullscreen takeover), behind a compact double-line prompt box.
 
 ## Install
 
-Needs Go 1.26 or newer.
+Prebuilt binaries for Linux, macOS and Windows (the installer checks the
+release's `checksums.txt` before installing):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh -s -- v1.2.3   # pin a version
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.ps1 | iex
+```
+
+Or build from source (Go 1.26 or newer):
 
 ```sh
 go install github.com/cmyolo441-coder/go-terminal-agent/cmd/gta@latest

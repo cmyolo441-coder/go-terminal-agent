@@ -33,6 +33,7 @@ Usage:
   gta -p "prompt" [flags]        run one prompt non-interactively and print the answer
   echo "prompt" | gta -p         read the prompt from stdin
   gta serve [flags]              run a local HTTP API (gta serve -h)
+  gta version [--short|--json]   print version, commit, build date, Go version and OS/arch
 
 Flags:
 `
@@ -119,6 +120,9 @@ func main() {
 	if len(args) > 0 && args[0] == "serve" {
 		run, args = runServe, args[1:]
 	}
+	if len(args) > 0 && args[0] == "version" {
+		run, args = runVersion, args[1:]
+	}
 	if err := run(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
@@ -134,7 +138,7 @@ func run(args []string) error {
 		return err
 	}
 	if f.showVer {
-		fmt.Printf("gta %s (%s, %s)\n", version.Version, version.Commit, version.Date)
+		fmt.Println(versionString())
 		return nil
 	}
 	root := f.cwd
