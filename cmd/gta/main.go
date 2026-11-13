@@ -219,6 +219,7 @@ func run(args []string) error {
 	registerCommands(root, cfg, cp, hookRunner, policy, mcpManager)
 	registerPluginCommands(ts)
 	registerGovernanceCommands(gv)
+	registerAutopilotCommands(ag, cfg, root)
 	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts, gv: gv}
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)

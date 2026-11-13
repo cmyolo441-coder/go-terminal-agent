@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/agent"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
@@ -41,6 +42,10 @@ type Extra struct {
 	Run func(ctx context.Context, arg string) (string, error)
 	// Prompt, when set, turns the command into a prompt sent to the agent.
 	Prompt func(arg string) (string, error)
+	// Job, when set, runs like an agent turn: it streams into the
+	// transcript through sink, asks approvals in the usual dialog, can be
+	// interrupted with esc, and its returned Markdown is printed at the end.
+	Job func(ctx context.Context, arg string, sink agent.Sink) (string, error)
 }
 
 var extras []Extra
@@ -128,6 +133,21 @@ func (m *model) runCommand(line string) tea.Cmd {
 }
 
 func (m *model) runExtra(e Extra, arg string) tea.Cmd {
+	if e.Job != nil {
+		if m.phase != phaseIdle {
+			m.emit(renderNotice("Wait for the current turn to finish."))
+			return nil
+		}
+		job, prog := e.Job, m.prog
+		// runCommand already echoed the command line.
+		return m.launch(func(ctx context.Context, sink agent.Sink) error {
+			out, err := job(ctx, arg, sink)
+			if strings.TrimSpace(out) != "" {
+				prog.Send(extraDoneMsg{out: out})
+			}
+			return err
+		})
+	}
 	if e.Prompt != nil {
 		if m.phase != phaseIdle {
 			m.emit(renderNotice("Wait for the current turn to finish."))
@@ -138,7 +158,7 @@ func (m *model) runExtra(e Extra, arg string) tea.Cmd {
 			m.emit(renderError(err.Error()))
 			return nil
 		}
-		return m.startRun(p, "/"+e.Name+" "+arg)
+		return m.startRun(p, "")
 	}
 	run := e.Run
 	return func() tea.Msg {
@@ -294,7 +314,7 @@ func cmdCompact(m *model, arg string) tea.Cmd {
 		p += "\nFocus especially on: " + arg
 	}
 	m.compacting = true
-	return m.startRun(p, "/compact "+arg)
+	return m.startRun(p, "")
 }
 
 // finishCompact replaces the history with the summary the model just wrote.
@@ -393,7 +413,7 @@ func cmdInit(m *model, _ string) tea.Cmd {
 		m.emit(renderNotice("Wait for the current turn to finish."))
 		return nil
 	}
-	return m.startRun(prompt.InitPrompt, "/init")
+	return m.startRun(prompt.InitPrompt, "")
 }
 
 func cmdMemory(m *model, _ string) tea.Cmd {

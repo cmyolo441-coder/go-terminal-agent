@@ -105,12 +105,13 @@ func lcsOps(a, b []string) []op {
 			ops = append(ops, op{' ', a[i], i, j})
 			i++
 			j++
-		case j < m && (i == n || dp[i][j+1] >= dp[i+1][j]):
-			ops = append(ops, op{'+', b[j], i, j})
-			j++
-		default:
+		case i < n && (j == m || dp[i+1][j] >= dp[i][j+1]):
+			// Deletions before insertions, as diff tools show them.
 			ops = append(ops, op{'-', a[i], i, j})
 			i++
+		default:
+			ops = append(ops, op{'+', b[j], i, j})
+			j++
 		}
 	}
 	return ops

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/agent"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/autopilot"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/plugin"
@@ -36,7 +37,7 @@ type toolset struct {
 // newToolset builds the core and plugin tools for cfg.
 func newToolset(cfg config.Config, root string) *toolset {
 	ts := &toolset{}
-	ts.core = tools.Default().All()
+	ts.core = append(tools.Default().All(), autopilot.NewVerifyTool(autopilot.VerifyToolConfig{}))
 	if webClientSide(cfg) {
 		opts := webtools.Options{}
 		if os.Getenv("HTTPS_PROXY") != "" || os.Getenv("https_proxy") != "" {

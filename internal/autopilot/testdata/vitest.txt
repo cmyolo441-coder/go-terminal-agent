@@ -1,0 +1,33 @@
+
+ RUN  v2.1.9 /work/js
+
+ ❯ v/sum.test.ts (2 tests | 1 failed) 10ms
+   × sum > adds 8ms
+     → expected -1 to be 3 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  v/sum.test.ts > sum > adds
+AssertionError: expected -1 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ -1
+
+ ❯ v/sum.test.ts:7:23
+      5| describe('sum', () => {
+      6|   test('adds', () => {
+      7|     expect(sum(1, 2)).toBe(3)
+       |                       ^
+      8|   })
+      9|   test('ok', () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  16:05:11
+   Duration  194ms (transform 32ms, setup 0ms, collect 26ms, tests 10ms, environment 0ms, prepare 39ms)
+

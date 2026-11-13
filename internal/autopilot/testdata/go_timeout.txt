@@ -1,0 +1,35 @@
+panic: test timed out after 1s
+	running tests:
+		TestSlow (1s)
+
+goroutine 17 [running]:
+testing.(*M).startAlarm.func1()
+	/usr/local/go/src/testing/testing.go:2484 +0x394
+created by time.goFunc
+	/usr/local/go/src/time/sleep.go:215 +0x2d
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0xc0000036c0, {0x5778d0?, 0xc000090b30?}, 0x584378)
+	/usr/local/go/src/testing/testing.go:1859 +0x431
+testing.runTests.func1(0xc0000036c0)
+	/usr/local/go/src/testing/testing.go:2279 +0x37
+testing.tRunner(0xc0000036c0, 0xc000090c70)
+	/usr/local/go/src/testing/testing.go:1792 +0xf4
+testing.runTests(0xc00000e1f8, {0x6a0d20, 0x1, 0x1}, {0x6abec0?, 0x7?, 0x6aad40?})
+	/usr/local/go/src/testing/testing.go:2277 +0x4b4
+testing.(*M).Run(0xc000094640)
+	/usr/local/go/src/testing/testing.go:2142 +0x64a
+main.main()
+	_testmain.go:45 +0x9b
+
+goroutine 6 [sleep]:
+time.Sleep(0x12a05f200)
+	/usr/local/go/src/runtime/time.go:338 +0x165
+example.com/to.TestSlow(0xc000003880?)
+	/work/to/s_test.go:8 +0x1d
+testing.tRunner(0xc000003880, 0x584378)
+	/usr/local/go/src/testing/testing.go:1792 +0xf4
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:1851 +0x413
+FAIL	example.com/to	1.005s
+FAIL

@@ -17,7 +17,7 @@ import (
 var toolNames = map[string]string{
 	"read_file": "Read", "write_file": "Write", "edit_file": "Edit", "list_dir": "List",
 	"glob": "Glob", "grep": "Grep", "bash": "Bash", "todo_write": "Tasks",
-	"web_search": "Web search", "web_fetch": "Web fetch",
+	"web_search": "Web search", "web_fetch": "Web fetch", "plan": "Plan", "verify": "Verify",
 }
 
 func displayName(tool string) string {

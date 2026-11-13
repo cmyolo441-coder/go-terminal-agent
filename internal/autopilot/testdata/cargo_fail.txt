@@ -1,0 +1,71 @@
+   Compiling rs v0.1.0 (/work/rs)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.38s
+     Running unittests src/lib.rs (target/debug/deps/rs-ffdf3d4f8e2db1ed)
+
+running 3 tests
+test tests::ok ... ok
+test tests::it_adds ... FAILED
+test tests::it_panics ... FAILED
+
+failures:
+
+---- tests::it_adds stdout ----
+
+thread 'tests::it_adds' (2570) panicked at src/lib.rs:9:9:
+assertion `left == right` failed
+  left: 0
+ right: 4
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed::<i32, i32>
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:394:5
+   4: rs::tests::it_adds
+             at ./src/lib.rs:9:9
+   5: rs::tests::it_adds::{closure#0}
+             at ./src/lib.rs:8:17
+   6: <rs::tests::it_adds::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/ops/function.rs:250:5
+   7: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- tests::it_panics stdout ----
+
+thread 'tests::it_panics' (2571) panicked at src/lib.rs:15:18:
+index out of bounds: the len is 0 but the index is 3
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic_bounds_check
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/panicking.rs:271:5
+   3: <usize as core::slice::index::SliceIndex<[i32]>>::index
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/slice/index.rs:272:10
+   4: <[i32] as core::ops::index::Index<usize>>::index
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/slice/index.rs:19:15
+   5: <alloc::vec::Vec<i32> as core::ops::index::Index<usize>>::index
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/alloc/src/vec/mod.rs:3864:9
+   6: rs::tests::it_panics
+             at ./src/lib.rs:15:18
+   7: rs::tests::it_panics::{closure#0}
+             at ./src/lib.rs:13:19
+   8: <rs::tests::it_panics::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/ops/function.rs:250:5
+   9: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/2d8144b7880597b6e6d3dfd63a9a9efae3f533d3/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    tests::it_adds
+    tests::it_panics
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `--lib`

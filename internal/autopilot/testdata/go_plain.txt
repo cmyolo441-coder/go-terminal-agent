@@ -1,0 +1,36 @@
+# example.com/demo/bad [example.com/demo/bad.test]
+bad/b.go:3:23: undefined: undefinedThing
+--- FAIL: TestAdd (0.00s)
+    calc_test.go:7: Add(2, 3) = -1, want 5
+        second line
+--- FAIL: TestTable (0.00s)
+    --- FAIL: TestTable/neg (0.00s)
+        calc_test.go:14: neg broken
+FAIL
+FAIL	example.com/demo	0.002s
+FAIL	example.com/demo/bad [build failed]
+--- FAIL: TestPanic (0.00s)
+panic: assignment to entry in nil map [recovered]
+	panic: assignment to entry in nil map
+
+goroutine 6 [running]:
+testing.tRunner.func1.2({0x54fea0, 0x6a0870})
+	/usr/local/go/src/testing/testing.go:1734 +0x21c
+testing.tRunner.func1()
+	/usr/local/go/src/testing/testing.go:1737 +0x35e
+panic({0x54fea0?, 0x6a0870?})
+	/usr/local/go/src/runtime/panic.go:792 +0x132
+example.com/demo/pan.helper(...)
+	/work/demo/pan/p_test.go:5
+example.com/demo/pan.TestPanic(0xc000003c00?)
+	/work/demo/pan/p_test.go:7 +0x28
+testing.tRunner(0xc000003c00, 0x584380)
+	/usr/local/go/src/testing/testing.go:1792 +0xf4
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:1851 +0x413
+FAIL	example.com/demo/pan	0.004s
+--- FAIL: TestSub (0.00s)
+    s_test.go:5: sub fails
+FAIL
+FAIL	example.com/demo/sub	0.002s
+FAIL

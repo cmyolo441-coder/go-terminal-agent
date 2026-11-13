@@ -1,0 +1,37 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.1.1, pluggy-1.6.0
+rootdir: /work/py
+collected 4 items
+
+tests/test_calc.py FFFF                                                  [100%]
+
+=================================== FAILURES ===================================
+___________________________________ test_add ___________________________________
+tests/test_calc.py:5: in test_add
+    assert add(2, 3) == 5
+E   assert -1 == 5
+E    +  where -1 = add(2, 3)
+______________________________ TestDiv.test_zero _______________________________
+tests/test_calc.py:9: in test_zero
+    assert div(1, 0) == 0
+           ^^^^^^^^^
+calc.py:5: in div
+    return a / b
+           ^^^^^
+E   ZeroDivisionError: division by zero
+_______________________________ test_param[1-1] ________________________________
+tests/test_calc.py:13: in test_param
+    assert add(a, b) == a + b
+E   assert 0 == (1 + 1)
+E    +  where 0 = add(1, 1)
+_______________________________ test_param[2-2] ________________________________
+tests/test_calc.py:13: in test_param
+    assert add(a, b) == a + b
+E   assert 0 == (2 + 2)
+E    +  where 0 = add(2, 2)
+=========================== short test summary info ============================
+FAILED tests/test_calc.py::test_add - assert -1 == 5
+FAILED tests/test_calc.py::TestDiv::test_zero - ZeroDivisionError: division b...
+FAILED tests/test_calc.py::test_param[1-1] - assert 0 == (1 + 1)
+FAILED tests/test_calc.py::test_param[2-2] - assert 0 == (2 + 2)
+============================== 4 failed in 0.02s ===============================

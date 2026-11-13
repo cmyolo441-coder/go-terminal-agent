@@ -273,3 +273,10 @@ func TestTruncateKeepsHeadAndTail(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestUnifiedDiffShowsDeletionsFirst(t *testing.T) {
+	d := UnifiedDiff("f", "a\nold\nc\n", "a\nnew\nc\n")
+	if !strings.Contains(d, "-old\n+new\n") {
+		t.Fatalf("diff = %q", d)
+	}
+}

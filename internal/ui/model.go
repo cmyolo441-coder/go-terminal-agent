@@ -70,9 +70,10 @@ type model struct {
 	pr   *printer
 	md   *mdRenderer
 
-	width int
-	input textarea.Model
-	phase phase
+	width  int
+	height int
+	input  textarea.Model
+	phase  phase
 
 	cancel    context.CancelFunc
 	runStart  time.Time
@@ -203,7 +204,7 @@ func (m *model) flash(s string) {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 		m.layoutInput()
 		return m, nil
 	case tickMsg:
@@ -555,9 +556,12 @@ func (m *model) submit(text string) tea.Cmd {
 	return m.startRun(text, text)
 }
 
-// startRun sends a prompt to the agent. shown is what the transcript shows.
+// startRun sends a prompt to the agent. shown is what the transcript shows;
+// empty shows nothing (the caller already echoed it).
 func (m *model) startRun(text, shown string) tea.Cmd {
-	m.emit(renderUser(shown, m.width))
+	if shown != "" {
+		m.emit(renderUser(shown, m.width))
+	}
 	msg, attached, problems := buildPrompt(m.ag.Env, text)
 	for _, a := range attached {
 		m.emit(sFaint.Render("  "+gResult+"  ") + sMuted.Render("Attached "+a))
@@ -569,6 +573,14 @@ func (m *model) startRun(text, shown string) tea.Cmd {
 		msg.Blocks[0].Text = strings.Join(m.pending, "\n\n") + "\n\n" + msg.Blocks[0].Text
 		m.pending = nil
 	}
+	ag := m.ag
+	return m.launch(func(ctx context.Context, sink agent.Sink) error {
+		return ag.Run(ctx, msg, sink)
+	})
+}
+
+// launch runs fn in the background with the running-turn UI.
+func (m *model) launch(fn func(ctx context.Context, sink agent.Sink) error) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.phase = phaseRunning
@@ -578,9 +590,9 @@ func (m *model) startRun(text, shown string) tea.Cmd {
 	m.turnUsage = llm.Usage{}
 	m.turnCost = 0
 	m.costKnown = false
-	ag, prog := m.ag, m.prog
+	prog := m.prog
 	go func() {
-		err := ag.Run(ctx, msg, teaSink{prog})
+		err := fn(ctx, teaSink{prog})
 		prog.Send(runDoneMsg{err})
 	}()
 	return tick()
@@ -870,6 +882,9 @@ func (m *model) approvalView() string {
 	case tools.KindExec:
 		title = "Allow this command?"
 	}
+	if c.Tool == "plan" {
+		title = "Run this plan?"
+	}
 	inner := m.width - 6
 	var body []string
 	body = append(body, sAmber.Bold(true).Render(title)+"  "+sBold.Render(displayName(c.Tool))+" "+sMuted.Render(clip(toolArg(c), inner-30)))
@@ -878,6 +893,13 @@ func (m *model) approvalView() string {
 	}
 	body = append(body, "")
 	switch {
+	case c.Tool == "plan":
+		lines := strings.Split(strings.TrimRight(m.md.render(c.Preview, inner), "\n"), "\n")
+		limit := max(10, m.height-14)
+		if len(lines) > limit {
+			lines = append(lines[:limit-1], sFaint.Render(fmt.Sprintf("… %d more lines (the full plan is printed above)", len(lines)-limit+1)))
+		}
+		body = append(body, lines...)
 	case c.Tool == "task":
 		lines := strings.Split(strings.TrimRight(c.Preview, "\n"), "\n")
 		for i, l := range lines {
@@ -908,6 +930,9 @@ func (m *model) approvalView() string {
 	}
 	body = append(body, "")
 	opts := []string{"Yes", "Yes, and allow " + permission.GrantLabel(c), "No, and tell GTA what to do differently"}
+	if c.Tool == "plan" {
+		opts = []string{"Yes, run it (ask before each edit)", "Yes, run it and auto-approve file edits", "No, and tell GTA what to change"}
+	}
 	for i, o := range opts {
 		label := fmt.Sprintf("%d. %s", i+1, o)
 		if i == m.approvalSel {

@@ -1,0 +1,36 @@
+FAIL src/broken.test.js
+  ● Test suite failed to run
+
+    Cannot find module './does-not-exist' from 'src/broken.test.js'
+
+    > 1 | const x = require('./does-not-exist');
+        |                                      ^
+      2 | test('x', () => {});
+      3 |
+
+      at Resolver._throwModNotFoundError (node_modules/jest-resolve/build/resolver.js:427:11)
+      at Object.<anonymous> (src/broken.test.js:1:38)
+
+FAIL src/sum.test.js
+  ● sum › adds 1 + 2 to equal 3
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 3
+    Received: -1
+
+      3 | describe('sum', () => {
+      4 |   test('adds 1 + 2 to equal 3', () => {
+    > 5 |     expect(sum(1, 2)).toBe(3);
+        |                       ^
+      6 |   });
+      7 |   test('passes', () => {
+      8 |     expect(1).toBe(1);
+
+      at Object.toBe (src/sum.test.js:5:23)
+
+Test Suites: 2 failed, 2 total
+Tests:       1 failed, 1 passed, 2 total
+Snapshots:   0 total
+Time:        0.389 s
+Ran all test suites.
