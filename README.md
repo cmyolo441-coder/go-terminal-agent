@@ -50,6 +50,19 @@ your shell (no fullscreen takeover), behind a compact double-line prompt box.
 - **Memory files**: `AGENTS.md`, `GTA.md` or `CLAUDE.md` in the project (and
   `AGENTS.md` in your config dir) are added to the system prompt.
 
+### Enterprise features
+
+| Area | What you get |
+| --- | --- |
+| **Code intelligence** | A local code index with ranked search (`code_search`), symbol lookup (`symbols`) and a repository map in the system prompt. Language servers (gopls, pyright, typescript-language-server, rust-analyzer, clangd) report compiler errors after every edit so the model fixes them in the same turn. |
+| **Autopilot** | `/plan <task>`: a planner writes a plan, a reviewer critiques it, you approve it, the agent executes it and a verifier checks the result against the plan and the tests. `/fixtests`: run the tests and fix failures until they pass. |
+| **Governance** | A managed policy file IT can deploy that users cannot loosen, a tamper-evident hash-chained audit log, secret redaction before anything reaches the model, and session, daily and monthly spending caps. |
+| **Reliability** | Fallback models across providers, retries with backoff, circuit breakers, rate limits (`rpm`, `tpm`) and a first-token timeout. |
+| **Observability** | OpenTelemetry traces and metrics (GenAI conventions) over OTLP/HTTP or to a file. |
+| **Extensibility** | Plugins that add tools and slash commands, client-side `web_fetch` and `web_search` for any provider, image attachments, and `gta serve`: a local HTTP API with streaming turns and remote approvals. |
+
+`/status` shows every one of these with its live state.
+
 ## Install
 
 Needs Go 1.26 or newer.
@@ -126,8 +139,9 @@ tool-capable model for coding work.
 | `esc` | interrupt the running turn |
 | `ctrl+c` twice | exit |
 
-Type `@path/to/file` to attach a file, and `!command` to run a shell command
-yourself; its output goes with your next prompt.
+Type `@path/to/file` to attach a file (`@screenshot.png` attaches an image),
+and `!command` to run a shell command yourself; its output goes with your
+next prompt.
 
 | Command | What it does |
 | --- | --- |
@@ -138,7 +152,10 @@ yourself; its output goes with your next prompt.
 | `/diff [--staged] [paths]`, `/status`, `/commit <msg>`, `/log [n]` | git |
 | `/undo [yes]`, `/checkpoints [restore <id> [yes]]` | undo file changes |
 | `/worktree new <name> \| list \| rm <name> [--force]` | git worktrees |
-| `/mcp [reconnect <name>]`, `/hooks`, `/sandbox`, `/provider` | integrations |
+| `/mcp [reconnect <name>]`, `/hooks`, `/sandbox`, `/provider`, `/plugins [reload]` | integrations |
+| `/plan <task>`, `/fixtests [n]` | autopilot |
+| `/index [refresh]`, `/lsp` | code index and language servers |
+| `/policy`, `/audit [verify \| tail n]`, `/budget` | governance |
 | `/exit` | quit |
 
 ## Permission modes
@@ -188,7 +205,26 @@ override both, and flags override everything.
     "stop": [],
     "session_start": []
   },
-  "trust_project_hooks": false
+  "trust_project_hooks": false,
+
+  "code_index": true,
+  "repo_map_budget": 1500,
+  "lsp": true,
+  "lsp_diagnostics_wait_ms": 4000,
+
+  "redact_secrets": true,
+  "audit_log": false,
+  "budget": { "session_usd": 5, "daily_usd": 20, "monthly_usd": 300, "warn_at": 0.8 },
+
+  "fallback_models": [
+    { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+    { "provider": "nvidia", "model": "kimi-k3.1-pro" }
+  ],
+  "routing": { "max_retries": 2, "first_token_timeout_sec": 60, "rpm": 0, "tpm": 0 },
+  "telemetry": { "enabled": false, "exporter": "otlp", "endpoint": "http://localhost:4318" },
+
+  "disable_plugins": false,
+  "client_web_tools": false
 }
 ```
 
@@ -217,6 +253,169 @@ Network is off unless `"sandbox_network": true`. Linux needs `bwrap`
 (package `bubblewrap`); macOS uses the built-in `sandbox-exec`. If a sandbox
 is configured but cannot run, GTA refuses to start instead of running
 commands unprotected.
+
+## Feature tour
+
+### Code intelligence
+
+GTA indexes the workspace on start (it honours `.gitignore`, caches the index
+in your config dir and refreshes changed files only). The model gets:
+
+- `code_search`: ranked search over code by meaning-bearing terms, not just
+  regex, with snippets.
+- `symbols`: find functions, types and methods by name, including camel-case
+  abbreviations (`NewReg` finds `NewRegistry`).
+- `repo_map`: the most important files and their key symbols, ranked by how
+  much the rest of the code refers to them. A map of about
+  `repo_map_budget` tokens is also in the system prompt from the first turn.
+- `diagnostics` and `code_nav` (definition, references, hover) from the
+  language servers you have installed.
+
+After every file edit, GTA asks the language server for that file's errors
+and adds them to the tool result, for example:
+
+```
+<diagnostics file="app.py" server="pyright">
+The language server reports 1 error(s) in this file after the change:
+L4:10 error: Type "int" is not assignable to declared type "str"
+</diagnostics>
+```
+
+Servers that are not installed are skipped silently; `/lsp` shows which ones
+run. Add or override servers with `lsp_servers`:
+
+```json
+{ "lsp_servers": [{ "name": "zls", "command": "zls", "extensions": [".zig"], "root_markers": ["build.zig"] }] }
+```
+
+### Autopilot
+
+```
+❯ /plan add rate limiting to the HTTP client
+```
+
+A planner agent explores the code and writes a step-by-step plan, a reviewer
+agent critiques it, and you see the result in an approval dialog: run it
+asking before each edit, run it with edits auto-approved, or send it back
+with changes. After execution a verifier compares the diff and the test
+results with the plan. `/fixtests 5` runs the test suite and fixes failures,
+at most 5 rounds. The `verify` tool lets the model run the project's tests
+at any time and get a structured failure report.
+
+### Governance
+
+**Managed policy.** IT can deploy a policy file that every user's GTA obeys.
+It lives at `/etc/gta/policy.json` (Linux),
+`/Library/Application Support/GTA/policy.json` (macOS) or
+`%ProgramData%\GTA\policy.json` (Windows); `GTA_POLICY_FILE` adds one more
+file, which can only tighten the rules. An invalid policy stops GTA from
+starting rather than running unmanaged.
+
+```json
+{
+  "version": 1,
+  "message": "Blocked by company policy. Ask #dev-tools for an exception.",
+  "max_permission_mode": "auto-edit",
+  "commands": { "deny": ["curl", "wget", "git push --force"] },
+  "paths": { "deny": ["~/.ssh", "~/.aws"], "deny_write": [".github/workflows"] },
+  "providers": { "allow": ["anthropic"] },
+  "models": { "allow": ["claude-*"] },
+  "sandbox": { "mode": "workspace-write", "network": false },
+  "audit": { "required": true },
+  "budget": { "daily_usd": 50 },
+  "secrets": { "redact": true }
+}
+```
+
+A denied call is refused before any approval prompt, the model sees the
+message, and the decision is audited. `/policy` shows the active rules.
+
+**Audit log.** With `"audit_log": true` (or a policy that requires it), every
+tool call, approval, model call and policy decision is appended to a
+hash-chained log under your config dir. `/audit verify` checks that no record
+was changed or removed; `/audit tail 20` shows the latest records.
+
+**Secret redaction.** API keys, tokens, private keys and passwords are
+replaced with placeholders in everything sent to the model, while your local
+files and history keep the real values. `secrets_allow` lists strings that
+are never redacted.
+
+**Budgets.** `budget.session_usd`, `daily_usd` and `monthly_usd` cap spending;
+GTA warns at `warn_at` (80% by default) and stops new model calls at the
+cap. `/budget` and `/cost` show where you stand.
+
+### Reliability
+
+When the main model is overloaded, rate limited or down, GTA retries with
+backoff and then moves to the next entry of `fallback_models`, across
+providers, and tells you:
+
+```
+! Routing: primary claude-opus-5-5 failed (overloaded); falling back to anthropic claude-sonnet-5-5
+```
+
+A route that keeps failing is skipped for a while (circuit breaker), and
+`rpm` / `tpm` keep you under a provider's limits.
+
+### Observability
+
+Set `"telemetry": {"enabled": true}` or `OTEL_EXPORTER_OTLP_ENDPOINT` to
+export OpenTelemetry traces (`invoke_agent`, `chat`, `execute_tool` spans)
+and metrics (token usage, operation duration, tool calls, retries,
+fallbacks) to any OTLP/HTTP collector. `"exporter": "file"` with
+`"file": "gta-otel.jsonl"` writes them locally instead.
+
+### Plugins
+
+A plugin is a directory with a `plugin.json` in `~/.config/gta/plugins/<name>/`
+(or `.gta/plugins/` in a trusted project):
+
+```json
+{
+  "name": "jira",
+  "version": "1.0.0",
+  "description": "Jira helpers",
+  "pass_env": ["JIRA_TOKEN"],
+  "tools": [{
+    "name": "jira_issue",
+    "description": "Fetch a Jira issue by key",
+    "kind": "read",
+    "input_schema": { "type": "object", "properties": { "key": { "type": "string" } }, "required": ["key"] },
+    "command": "./jira-issue"
+  }],
+  "commands": [{ "name": "standup", "description": "Draft my standup", "prompt": "Summarize my commits since yesterday. {{args}}" }]
+}
+```
+
+A tool gets its input as JSON on stdin and prints
+`{"output": "...", "is_error": false}`. It runs with a timeout, a capped
+output and a scrubbed environment. `/plugins` lists plugins and
+`/plugins reload` reloads them.
+
+### Web tools
+
+Non-Anthropic providers (and Anthropic with `"client_web_tools": true`) get
+`web_fetch` and `web_search`. Search uses `BRAVE_API_KEY`,
+`TAVILY_API_KEY` or `SEARXNG_URL`, whichever is set.
+
+### Server mode
+
+```sh
+gta serve                      # listens on 127.0.0.1:7878
+TOKEN=$(cat ~/.config/gta/serve.token)
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"mode":"ask"}' localhost:7878/v1/sessions
+curl -N -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"run the tests"}' localhost:7878/v1/sessions/<id>/messages
+```
+
+A turn streams Server-Sent Events (`text`, `tool_call`, `tool_done`,
+`approval_required`, `usage`, `done`, …). Answer an approval with
+`POST /v1/sessions/<id>/approvals/<request_id>` and
+`{"decision": "allow_once"}`. The server listens on loopback only unless you
+pass `--allow-remote`, and every request needs the bearer token (from
+`GTA_SERVE_TOKEN`, or generated and saved to `--token-file`). The same
+policy, audit, budgets and sandbox apply to every session.
 
 ## Headless mode
 
@@ -253,4 +452,10 @@ Package layout:
 | `internal/checkpoint` | file snapshots and undo |
 | `internal/gitx` | git helpers |
 | `internal/ui` | inline terminal UI and headless output |
+| `internal/codeintel` | code index, search, symbols and repository map |
+| `internal/lsp` | language server client and diagnostics |
+| `internal/autopilot` | `/plan` and `/fixtests` loops and the `verify` tool |
+| `internal/policy`, `internal/audit`, `internal/secrets`, `internal/budget` | governance |
+| `internal/router`, `internal/telemetry` | fallback routing and OpenTelemetry |
+| `internal/plugin`, `internal/webtools`, `internal/server` | plugins, web tools, HTTP API |
 | `internal/config`, `internal/session`, `internal/prompt`, `internal/pricing` | support |
