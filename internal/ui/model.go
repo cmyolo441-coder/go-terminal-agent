@@ -81,6 +81,7 @@ type model struct {
 	blockKind string
 	running   []runningTool
 	subs      map[int]subRow
+	files     *fileIndex
 	turnUsage llm.Usage
 	turnCost  float64
 	costKnown bool
@@ -334,6 +335,10 @@ func (m *model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.suggest) > 0 {
 			chosen := m.suggest[m.suggestAt]
+			if chosen.file {
+				m.completeSuggestion()
+				return m, nil
+			}
 			cur := strings.TrimSpace(m.input.Value())
 			if cur != "/"+chosen.name && !strings.HasPrefix(cur, "/"+chosen.name+" ") {
 				m.completeSuggestion()
@@ -463,6 +468,26 @@ func (m *model) historyNext() bool {
 
 func (m *model) updateSuggestions() {
 	v := m.input.Value()
+	if q, ok := atToken(v); ok {
+		if m.files == nil {
+			m.files = &fileIndex{root: m.opts.Root}
+		}
+		m.suggest = m.suggest[:0]
+		for _, p := range m.files.match(q, 8) {
+			kind := "file"
+			if strings.HasSuffix(p, "/") {
+				kind = "directory"
+			}
+			m.suggest = append(m.suggest, command{name: p, help: kind, file: true})
+		}
+		if len(m.suggest) == 0 {
+			m.suggest = nil
+		}
+		if m.suggestAt >= len(m.suggest) {
+			m.suggestAt = 0
+		}
+		return
+	}
 	if !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \n") {
 		m.suggest = nil
 		return
@@ -475,6 +500,22 @@ func (m *model) updateSuggestions() {
 
 func (m *model) completeSuggestion() {
 	c := m.suggest[m.suggestAt]
+	if c.file {
+		v := m.input.Value()
+		i := strings.LastIndexAny(v, " \n\t")
+		v = v[:i+1] + "@" + c.name
+		if !strings.HasSuffix(c.name, "/") {
+			v += " "
+		}
+		m.input.SetValue(v)
+		m.input.CursorEnd()
+		m.suggest = nil
+		m.layoutInput()
+		if strings.HasSuffix(c.name, "/") {
+			m.updateSuggestions()
+		}
+		return
+	}
 	v := "/" + c.name
 	if c.args != "" {
 		v += " "
@@ -795,6 +836,9 @@ func (m *model) suggestView() string {
 			break
 		}
 		name := "/" + c.name
+		if c.file {
+			name = "@" + c.name
+		}
 		if c.args != "" {
 			name += " " + c.args
 		}

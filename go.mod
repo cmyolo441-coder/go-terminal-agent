@@ -5,9 +5,12 @@ go 1.26.0
 require (
 	github.com/anthropics/anthropic-sdk-go/v2 v2.9.0
 	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/charmbracelet/bubbles v1.0.0
+	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/mattn/go-runewidth v0.0.31
+	golang.org/x/term v0.48.0
 )
 
 require (
@@ -17,8 +20,6 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/charmbracelet/bubbles v1.0.0 // indirect
-	github.com/charmbracelet/bubbletea v1.3.10 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
@@ -59,6 +60,5 @@ require (
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 )

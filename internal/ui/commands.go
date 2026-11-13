@@ -28,6 +28,8 @@ type command struct {
 	args    string
 	help    string
 	run     func(m *model, arg string) tea.Cmd
+	// file marks an @file completion rather than a slash command.
+	file bool
 }
 
 // Extra lets the application register more slash commands (git, MCP, ...).
