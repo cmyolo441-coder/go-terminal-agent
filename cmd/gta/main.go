@@ -221,10 +221,14 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	system := prompt.Build(root)
+	// prompt.Build runs git; overlap it with opening the code index.
+	systemc := make(chan string, 1)
+	go func() { systemc <- prompt.Build(root) }()
 	ci := startCodeIntel(cfg, root, gv.codeExclude(root))
 	defer ci.close()
-	if m := ci.systemPrompt(); m != "" {
+	ciPrompt := ci.systemPrompt()
+	system := <-systemc
+	if m := ciPrompt; m != "" {
 		system += "\n\n" + m
 	}
 	for _, n := range ci.notes {
