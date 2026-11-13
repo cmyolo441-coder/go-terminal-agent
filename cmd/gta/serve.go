@@ -69,6 +69,12 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	if n := cfg.IgnoredProjectNotice(); n != "" {
+		fmt.Fprintln(os.Stderr, "gta:", n)
+	}
+	if cfg.IgnoredProjectHooks {
+		fmt.Fprintln(os.Stderr, "gta: ignoring hooks and MCP servers in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")
+	}
 	applyFlags(&cfg, flags{model: model, mode: mode, provider: provider, sandbox: sandboxMode})
 	if err := cfg.Validate(); err != nil {
 		return err

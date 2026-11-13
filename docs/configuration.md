@@ -26,8 +26,12 @@ The same user config directory also holds: `sessions/`, `checkpoints/`,
 built-in defaults  <  user config  <  project config  <  environment  <  flags  →  managed policy clamps
 ```
 
-Exceptions, all enforced in `internal/config/config.go` and `cmd/gta`:
+Exceptions, all enforced in `internal/config` and `cmd/gta`:
 
+- Unless the user config sets `"trust_project_hooks": true`, the project
+  config is **untrusted**: it may set preferences and tighten security
+  settings, and every other key it sets is ignored. See
+  [Project trust](#project-trust).
 - `hooks` and `mcp_servers` are **merged**, not replaced: user entries always
   apply; project entries apply only when the user config sets
   `"trust_project_hooks": true`.
@@ -89,7 +93,7 @@ These only affect the `anthropic` provider.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `hooks` | object | — | Map of event to a list of hooks. See [Hooks](#hooks). |
-| `trust_project_hooks` | bool | `false` | User config only. Lets the project's `.gta/config.json` hooks and MCP servers, and `.gta/plugins/`, run. |
+| `trust_project_hooks` | bool | `false` | User config only. Trusts the project: every key of its `.gta/config.json` applies (including hooks and MCP servers) and `.gta/plugins/` load. See [Project trust](#project-trust). |
 | `mcp_servers` | object | — | Map of server name to server config. See [MCP servers](#mcp-servers). |
 | `disable_plugins` | bool | `false` | Turn the plugin system off. |
 | `disabled_plugins` | string[] | — | Plugin names not to load. |
@@ -246,21 +250,51 @@ Keys are never read from config files and GTA never writes one to disk.
 
 ## Project trust
 
-A cloned repository's `.gta/config.json` and `.gta/plugins/` are treated as
-untrusted:
+A cloned repository's `.gta/config.json` and `.gta/plugins/` are written by
+whoever controls the repository, so they are **untrusted** unless the
+**user** config sets `"trust_project_hooks": true`. The rule for an untrusted
+project file:
 
-| Project item | Without `trust_project_hooks` | With it (user config) |
+1. **Preferences apply as written.** They cannot run a command, send data
+   anywhere new or weaken a protection.
+2. **Security settings apply only if they are at least as strict** as the
+   setting from defaults and the user config. A looser value is ignored and
+   the user's value stays.
+3. **Every other key is ignored**, including keys added in later versions
+   until they are classified.
+
+GTA prints one startup notice naming every key that was ignored or only
+partly applied (`gta: this project is not trusted, so these settings in
+.gta/config.json were ignored: base_url, permission_mode ...`), plus a
+separate one for ignored hooks and MCP servers, and `/status` shows them
+under *project config*. The file is still parsed strictly: unknown keys,
+trailing data and invalid values stop GTA
+from starting.
+
+| Class | Keys | Without `trust_project_hooks` |
 | --- | --- | --- |
-| `hooks` | Ignored, with a startup notice | Appended after user hooks |
-| `mcp_servers` | Ignored | Added (same name replaces the user entry) |
-| `.gta/plugins/*` | Not loaded; listed by `/plugins` as untrusted | Loaded after user plugins |
-| Every other key | **Applied** | Applied |
+| Preference | `model`, `effort`, `max_tokens`, `show_thinking`, `compaction`, `fallbacks`, `max_turns`, `shell_timeout_sec`, `theme`, `density`, `subagent_model`, `routing`, `code_index`, `code_index_max_file_size`, `code_index_ignore`, `repo_map_budget`, `lsp_diagnostics_wait_ms` | Applied |
+| Tighten only | `permission_mode` | Applied if not more permissive (`plan` < `ask` < `auto-edit` < `yolo`) |
+| | `sandbox` | Applied if not weaker (`off` < `workspace-write` < `read-only`) |
+| | `allow_commands` | Only entries already in the user's list are kept |
+| | `sandbox_network`, `web_search`, `web_fetch`, `client_web_tools`, `lsp` | Only `false` applies |
+| | `redact_secrets`, `audit_log`, `disable_plugins` | Only `true` applies |
+| | `disabled_plugins` | Added to the user's list |
+| | `audit_sync` | Applied if not less durable (`never` < `interval` < `always`) |
+| | `budget` | Each cap is tightened, never raised or removed (as with a policy) |
+| | `trust_project_hooks` | Never applies; a project cannot grant itself trust |
+| Ignored | `provider`, `base_url`, `fallback_models`, `telemetry`, `lsp_servers`, `hooks`, `mcp_servers`, `secrets_allow`, `audit_dir` | Ignored |
+| Plugins | `.gta/plugins/*` | Not loaded; listed by `/plugins` as untrusted |
 
-The last row matters: a project file can still change `permission_mode`,
-`allow_commands`, `sandbox`, `redact_secrets`, `base_url`, `lsp_servers` and
-the other keys. Review `.gta/config.json` in repositories you do not trust,
-and use a managed policy where this matters. See
-[security.md](security.md#what-is-not-protected).
+With `trust_project_hooks` in the user config, every key of the project file
+applies as before: it overrides the user config, project `hooks` are
+appended after user hooks, project `mcp_servers` are added (same name
+replaces the user entry), and `.gta/plugins/*` are loaded after user
+plugins. Only trust repositories whose configuration you would run yourself.
+
+Environment variables and flags are the user's own and are not restricted
+(`GTA_PERMISSION_MODE=yolo` still works). A managed policy applies on top
+either way.
 
 ## Full example
 

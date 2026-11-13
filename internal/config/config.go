@@ -222,12 +222,9 @@ func Load(root string) (Config, error) {
 	userHooks, trust := cfg.Hooks, cfg.TrustProjectHooks
 	userMCP := cfg.MCPServers
 	// Decoding the project file reuses the user's slices and maps, so keep
-	// deep copies of what restrictUntrusted may need to restore.
-	user := cfg
-	cloneJSON(&user.AllowCommands, cfg.AllowCommands)
-	cloneJSON(&user.SecretsAllow, cfg.SecretsAllow)
-	cloneJSON(&user.LSPServers, cfg.LSPServers)
-	cloneJSON(&user.Telemetry, cfg.Telemetry)
+	// a deep copy for restrictUntrusted to restore from.
+	var user Config
+	cloneJSON(&user, cfg)
 	cfg.Hooks = nil
 	cfg.MCPServers = nil
 	if err := mergeFile(&cfg, ProjectFile(root)); err != nil {
@@ -261,38 +258,6 @@ func Load(root string) (Config, error) {
 	cfg.IgnoredProjectHooks = !trust && (projectHooks.Count() > 0 || len(projectMCP) > 0)
 	applyEnv(&cfg)
 	return cfg, cfg.Validate()
-}
-
-// restrictUntrusted undoes the settings an untrusted project file may not
-// change, because a cloned repository could use them to run programs
-// (lsp_servers, allow_commands), to send the API key or the conversation
-// elsewhere (base_url, telemetry), to hide what happened (audit) or to
-// lift the user's safeguards (yolo mode, a weaker sandbox, network in the
-// sandbox, secret redaction, the budget). A project may still tighten
-// them. It returns the names of the settings it reverted.
-func restrictUntrusted(cfg, user *Config) []string {
-	var ignored []string
-	revert := func(name string, changed bool, undo func()) {
-		if changed {
-			undo()
-			ignored = append(ignored, name)
-		}
-	}
-	revert("base_url", cfg.BaseURL != user.BaseURL, func() { cfg.BaseURL = user.BaseURL })
-	revert("lsp_servers", !sameJSON(cfg.LSPServers, user.LSPServers), func() { cfg.LSPServers = user.LSPServers })
-	revert("allow_commands", !sameJSON(cfg.AllowCommands, user.AllowCommands), func() { cfg.AllowCommands = user.AllowCommands })
-	revert("telemetry", !sameJSON(cfg.Telemetry, user.Telemetry), func() { cfg.Telemetry = user.Telemetry })
-	revert("audit_log", user.AuditLog && !cfg.AuditLog, func() { cfg.AuditLog = true })
-	revert("audit_dir", cfg.AuditDir != user.AuditDir, func() { cfg.AuditDir = user.AuditDir })
-	revert("audit_sync", cfg.AuditSync != user.AuditSync, func() { cfg.AuditSync = user.AuditSync })
-	revert("redact_secrets", user.RedactSecrets && !cfg.RedactSecrets, func() { cfg.RedactSecrets = true })
-	revert("secrets_allow", !sameJSON(cfg.SecretsAllow, user.SecretsAllow), func() { cfg.SecretsAllow = user.SecretsAllow })
-	revert("permission_mode", cfg.PermissionMode == "yolo" && user.PermissionMode != "yolo", func() { cfg.PermissionMode = user.PermissionMode })
-	revert("sandbox", sandboxRank(cfg.Sandbox) < sandboxRank(user.Sandbox), func() { cfg.Sandbox = user.Sandbox })
-	revert("sandbox_network", cfg.SandboxNetwork && !user.SandboxNetwork, func() { cfg.SandboxNetwork = false })
-	tight := user.Budget.Tighten(cfg.Budget)
-	revert("budget", tight != cfg.Budget, func() { cfg.Budget = tight })
-	return ignored
 }
 
 // cloneJSON deep-copies src into dst through JSON.

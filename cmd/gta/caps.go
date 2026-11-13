@@ -166,6 +166,9 @@ func (s *capSources) capabilities() []ui.Capability {
 		add("Workspace", "git", "not a repository", ui.CapOff, true)
 	}
 	add("Workspace", "tools", fmt.Sprintf("%d available", len(s.ag.Registry().Names())), ui.CapOn, true)
+	if k := s.cfg.IgnoredProjectSettings; len(k) > 0 {
+		add("Workspace", "project config", "untrusted · ignored "+strings.Join(k, ", "), ui.CapWarn, true)
+	}
 	return out
 }
 

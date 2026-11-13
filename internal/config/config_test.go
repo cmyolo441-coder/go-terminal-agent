@@ -14,13 +14,13 @@ func TestLoadMergesFilesAndEnv(t *testing.T) {
 	t.Setenv("GTA_EFFORT", "")
 	os.WriteFile(filepath.Join(userDir, "config.json"), []byte(`{"effort":"max","web_search":true}`), 0o600)
 	os.MkdirAll(filepath.Join(root, ".gta"), 0o755)
-	os.WriteFile(filepath.Join(root, ".gta", "config.json"), []byte(`{"permission_mode":"auto-edit"}`), 0o600)
+	os.WriteFile(filepath.Join(root, ".gta", "config.json"), []byte(`{"permission_mode":"plan"}`), 0o600)
 
 	cfg, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Effort != "max" || !cfg.WebSearch || cfg.PermissionMode != "auto-edit" || cfg.Model != DefaultModel {
+	if cfg.Effort != "max" || !cfg.WebSearch || cfg.PermissionMode != "plan" || cfg.Model != DefaultModel {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 	t.Setenv("GTA_MODEL", "claude-sonnet-5-5")

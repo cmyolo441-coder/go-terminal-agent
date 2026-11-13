@@ -238,8 +238,8 @@ func run(args []string) error {
 			system += "\n\n<session-start-hook>\n" + extra + "\n</session-start-hook>"
 		}
 	}
-	if len(cfg.IgnoredProjectSettings) > 0 {
-		fmt.Fprintf(os.Stderr, "gta: this project is not trusted, so these settings in .gta/config.json were ignored: %s (set \"trust_project_hooks\": true in your user config to allow them)\n", strings.Join(cfg.IgnoredProjectSettings, ", "))
+	if n := cfg.IgnoredProjectNotice(); n != "" {
+		fmt.Fprintln(os.Stderr, "gta:", n)
 	}
 	if cfg.IgnoredProjectHooks {
 		fmt.Fprintln(os.Stderr, "gta: ignoring hooks in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")

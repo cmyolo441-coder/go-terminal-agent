@@ -48,6 +48,34 @@ Tools have a kind: **read**, **write** or **exec**.
 - `max_permission_mode` in a managed policy caps every mode change,
   including `shift+tab` and `/mode`.
 
+## Untrusted project configuration
+
+A repository's `.gta/config.json` is attacker-controlled when you open a
+repository you just cloned. Unless your **user** config sets
+`"trust_project_hooks": true`, GTA applies it under one rule:
+
+- **Preferences apply**: `model`, `effort`, `max_tokens`, `show_thinking`,
+  `compaction`, `fallbacks`, `max_turns`, `shell_timeout_sec`, `theme`,
+  `density`, `subagent_model`, `routing`, `code_index`,
+  `code_index_max_file_size`, `code_index_ignore`, `repo_map_budget`,
+  `lsp_diagnostics_wait_ms`.
+- **Security settings may only tighten**: a stricter `permission_mode` or
+  `sandbox`; `allow_commands` entries the user already allows;
+  `sandbox_network`, `web_search`, `web_fetch`, `client_web_tools` and
+  `lsp` only turned off; `redact_secrets`, `audit_log` and
+  `disable_plugins` only turned on; more `disabled_plugins`; a more durable
+  `audit_sync`; lower `budget` caps.
+- **Everything else is ignored**: `provider`, `base_url`,
+  `fallback_models` and `telemetry` (where your code, API key and metadata
+  are sent), `lsp_servers`, `hooks` and `mcp_servers` (commands GTA
+  starts), `secrets_allow`, `audit_dir`, `trust_project_hooks`, and any
+  key not classified yet.
+
+One startup notice names every ignored (or only partly applied) key, and
+`/status` repeats it. The full table is in
+[configuration.md](configuration.md#project-trust). Environment variables
+and flags are yours and are not restricted.
+
 ## Sandbox
 
 `"sandbox"` (or `--sandbox`, `GTA_SANDBOX`) confines shell commands:
@@ -366,8 +394,11 @@ GTA assumes the person running it is trusted, and protects them from:
   read-before-write, destructive command checks, checkpoints and `/undo`.
 - **The model leaking credentials to the provider**: secret redaction.
 - **Runaway spend**: budgets, `max_turns`, per-sub-agent turn limits.
-- **A cloned repository running code on its own**: project hooks, MCP
-  servers and plugins need `trust_project_hooks` in the user config.
+- **A cloned repository running code on its own or loosening your
+  settings**: unless the user config sets `trust_project_hooks`, a project's
+  `.gta/config.json` may only set preferences and tighten security settings
+  (see [Untrusted project configuration](#untrusted-project-configuration)),
+  and project plugins do not load.
 - **Users loosening company rules**: the managed policy is read from a
   system path, cannot be switched off by environment variables, and fails
   closed.
@@ -398,11 +429,14 @@ GTA assumes the person running it is trusted, and protects them from:
   the repository map and `session_start` hook output are sent as written.
   Redaction is also pattern-based and can miss secrets or redact
   non-secrets.
-- **Project config keys other than hooks, MCP servers and plugins are
-  trusted.** A repository's `.gta/config.json` can set `permission_mode`,
-  `allow_commands`, `sandbox`, `redact_secrets`, `base_url` (where your API
-  key is sent) and `lsp_servers` (a command GTA starts). Only a managed
-  policy constrains some of these.
+- **A trusted project is fully trusted.** With `trust_project_hooks` in the
+  user config, every project uses its `.gta/config.json` as written:
+  `permission_mode`, `base_url` (where your API key is sent), `lsp_servers`
+  and hooks (commands GTA starts) included. Trust is all or nothing and
+  applies to every workspace.
+- **Preferences from an untrusted project still apply.** A repository can
+  pick the model (and so the cost), `max_turns`, `shell_timeout_sec` and
+  the code index settings. Use budget caps to bound spend.
 - **Local files under the user's control.** The budget ledger, sessions and
   an unkeyed audit log can be edited or deleted by the user.
 - **MCP servers, plugins and hooks run with the user's full rights** and

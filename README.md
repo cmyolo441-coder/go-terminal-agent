@@ -189,7 +189,7 @@ unless they chain several commands.
 
 User config: `~/.config/gta/config.json` (or `$GTA_CONFIG_DIR/config.json`).
 Project config: `.gta/config.json` in the workspace; it overrides the user
-file. Environment variables `GTA_MODEL`, `GTA_EFFORT`, `GTA_PERMISSION_MODE`,
+file within the limits of [project trust](docs/configuration.md#project-trust). Environment variables `GTA_MODEL`, `GTA_EFFORT`, `GTA_PERMISSION_MODE`,
 `GTA_MAX_TOKENS`, `GTA_PROVIDER`, `GTA_SANDBOX` and `ANTHROPIC_BASE_URL`
 override both, and flags override everything.
 
@@ -244,8 +244,12 @@ override both, and flags override everything.
 }
 ```
 
-Hooks and MCP servers in a project's `.gta/config.json` run commands, so they
-are ignored unless your **user** config sets `"trust_project_hooks": true`.
+A project's `.gta/config.json` comes from whoever controls the repository,
+so unless your **user** config sets `"trust_project_hooks": true` it may only
+set preferences (model, effort, theme, `max_turns`, code index settings, …)
+and make security settings stricter; hooks, MCP servers, `base_url`,
+`provider`, `lsp_servers`, `telemetry` and any loosening are ignored with a
+startup notice. See [docs/configuration.md](docs/configuration.md#project-trust).
 
 ### Hooks
 
