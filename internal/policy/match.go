@@ -17,12 +17,15 @@ func globMatch(pattern, s string) bool {
 	star, mark := -1, 0
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
-			p++
-			i++
+		// The star case comes first: a '*' in s must not be taken as a
+		// literal match for the pattern's '*', or "rm *" would miss
+		// "rm *.log".
 		case p < len(pattern) && pattern[p] == '*':
 			star, mark = p, i
 			p++
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p++
+			i++
 		case star >= 0:
 			p = star + 1
 			mark++
@@ -205,7 +208,8 @@ func (pp pathPattern) match(p string) bool {
 			}
 		}
 		i := strings.LastIndexByte(p, '/')
-		if i <= 0 || (i == 2 && p[1] == ':') {
+		// A drive root is C:/; "/:" is an ordinary directory.
+		if i <= 0 || (i == 2 && p[0] != '/' && isAbsSlash(p)) {
 			// Root: try it, then stop.
 			root := p[:i+1]
 			if root != p && root != "" {
@@ -221,6 +225,33 @@ func (pp pathPattern) match(p string) bool {
 	}
 }
 
+// resolveExisting resolves symlinks in the longest existing prefix of the
+// clean absolute path p and appends the rest unchanged. Resolving only p
+// or its parent is not enough: writing link/new/dir/file, where link
+// points into a protected directory and new/dir does not exist yet,
+// creates those directories under the link's target.
+func resolveExisting(p string) (string, bool) {
+	rest := ""
+	for cur := p; ; {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			if rest != "" {
+				r = filepath.Join(r, rest)
+			}
+			return r, true
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", false
+		}
+		if rest == "" {
+			rest = filepath.Base(cur)
+		} else {
+			rest = filepath.Join(filepath.Base(cur), rest)
+		}
+		cur = parent
+	}
+}
+
 // pathCandidates returns the forms of p a rule must be checked against:
 // the cleaned absolute path and, when it differs, the path with symlinks
 // resolved (for a file that does not exist yet, its directory's). All are
@@ -228,6 +259,14 @@ func (pp pathPattern) match(p string) bool {
 func pathCandidates(p, root, home string, fold bool) []string {
 	if p == "" {
 		return nil
+	}
+	// A shell expands $HOME and ${HOME} like ~, so "cat $HOME/.ssh/id_rsa"
+	// names the same file as "cat ~/.ssh/id_rsa".
+	for _, v := range []string{"${HOME}", "$HOME"} {
+		if rest, ok := strings.CutPrefix(p, v); ok && (rest == "" || rest[0] == '/' || rest[0] == '\\') {
+			p = "~" + rest
+			break
+		}
 	}
 	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
 		if home != "" {
@@ -240,14 +279,25 @@ func pathCandidates(p, root, home string, fold bool) []string {
 				root = wd
 			}
 		}
-		p = filepath.Join(root, p)
+		p = root + string(filepath.Separator) + p
 	}
+	// raw keeps ".." where the caller wrote it: the OS applies it after
+	// following symlinks (link/../x is in the link target's parent), while
+	// Clean applies it lexically.
+	raw := p
 	p = filepath.Clean(p)
 	out := []string{p}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
+	if r, ok := resolveExisting(p); ok {
 		out = append(out, r)
-	} else if d, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-		out = append(out, filepath.Join(d, filepath.Base(p)))
+	}
+	if strings.Contains(raw, "..") {
+		if r, err := filepath.EvalSymlinks(raw); err == nil {
+			out = append(out, r)
+		} else if i := strings.LastIndexAny(raw, `/\`); i > 0 {
+			if d, err := filepath.EvalSymlinks(raw[:i]); err == nil {
+				out = append(out, filepath.Join(d, raw[i+1:]))
+			}
+		}
 	}
 	seen := map[string]bool{}
 	res := out[:0]

@@ -143,6 +143,16 @@ func parseShellInto(cmd string, depth int, out *[]segment) {
 				}
 			}
 			i++
+		case c == '$' && i+1 < len(cmd) && cmd[i+1] == '\'':
+			// ANSI-C quoting: $'cu\x72l' is curl.
+			s, next := ansiCQuoted(cmd, i+2)
+			cur.WriteString(s)
+			inTok = true
+			i = next
+		case c == '$' && i+1 < len(cmd) && cmd[i+1] == '"':
+			// Locale quoting: $"curl" is "curl".
+			inTok = true
+			i++
 		case c == '$' && i+1 < len(cmd) && cmd[i+1] == '(':
 			// Command substitution runs its own commands; the word keeps a
 			// marker so the outer command is still seen.
@@ -214,6 +224,104 @@ func parseShellInto(cmd string, depth int, out *[]segment) {
 		}
 	}
 	endSegment()
+}
+
+// ansiCQuoted decodes the body of a $'...' string starting at i (just after
+// the opening quote) as bash does, and returns it with the index after the
+// closing quote. An unterminated string runs to the end of cmd.
+func ansiCQuoted(cmd string, i int) (string, int) {
+	var b strings.Builder
+	hexVal := func(c byte) (int, bool) {
+		switch {
+		case c >= '0' && c <= '9':
+			return int(c - '0'), true
+		case c >= 'a' && c <= 'f':
+			return int(c-'a') + 10, true
+		case c >= 'A' && c <= 'F':
+			return int(c-'A') + 10, true
+		}
+		return 0, false
+	}
+	// digits reads up to max digits in base from cmd[j:].
+	digits := func(j, max, base int) (int, int) {
+		v, n := 0, 0
+		for n < max && j+n < len(cmd) {
+			d, ok := hexVal(cmd[j+n])
+			if !ok || d >= base {
+				break
+			}
+			v = v*base + d
+			n++
+		}
+		return v, n
+	}
+	for i < len(cmd) {
+		c := cmd[i]
+		if c == '\'' {
+			return b.String(), i + 1
+		}
+		if c != '\\' || i+1 >= len(cmd) {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		e := cmd[i+1]
+		i += 2
+		switch e {
+		case 'a':
+			b.WriteByte('\a')
+		case 'b':
+			b.WriteByte('\b')
+		case 'e', 'E':
+			b.WriteByte(0x1b)
+		case 'f':
+			b.WriteByte('\f')
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'v':
+			b.WriteByte('\v')
+		case '\\', '\'', '"', '?':
+			b.WriteByte(e)
+		case 'c':
+			if i < len(cmd) {
+				b.WriteByte(cmd[i] & 0x1f)
+				i++
+			}
+		case 'x':
+			v, n := digits(i, 2, 16)
+			if n == 0 {
+				b.WriteString(`\x`)
+				break
+			}
+			b.WriteByte(byte(v))
+			i += n
+		case 'u', 'U':
+			max := 4
+			if e == 'U' {
+				max = 8
+			}
+			v, n := digits(i, max, 16)
+			if n == 0 {
+				b.WriteByte('\\')
+				b.WriteByte(e)
+				break
+			}
+			b.WriteRune(rune(v))
+			i += n
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			v, n := digits(i-1, 3, 8)
+			b.WriteByte(byte(v))
+			i += n - 1
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(e)
+		}
+	}
+	return b.String(), len(cmd)
 }
 
 func isDigits(s string) bool {

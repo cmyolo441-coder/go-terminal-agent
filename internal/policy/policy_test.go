@@ -263,10 +263,40 @@ func TestPathRulesFollowSymlinks(t *testing.T) {
 	os.Symlink(secret, filepath.Join(ws, "linkdir"))
 	p := mustParse(t, `{"version":1,"paths":{"deny":["`+filepath.ToSlash(secret)+`"]}}`, "p")
 	e := enforcer(t, p)
-	for _, path := range []string{"innocent.txt", "linkdir/key", "linkdir/new-file"} {
+	os.MkdirAll(filepath.Join(secret, "sub"), 0o700)
+	os.Symlink(filepath.Join(secret, "sub"), filepath.Join(ws, "sublink"))
+	for _, path := range []string{"innocent.txt", "linkdir/key", "linkdir/new-file",
+		// Directories that do not exist yet under a symlinked directory.
+		"linkdir/new/dir/file",
+		// ".." after a symlink is applied to the link's target.
+		"sublink/../key", "sublink/../new-file"} {
 		if d := e.CheckPath(path, ws, true); d.Allowed {
 			t.Errorf("%s reaches the protected directory through a symlink", path)
 		}
+	}
+	if d := e.CheckCommand("cat sublink/../key", ws); d.Allowed {
+		t.Error("cat sublink/../key reached the protected directory")
+	}
+	if d := e.CheckPath("ok/new/file", ws, true); !d.Allowed {
+		t.Errorf("an unrelated new path was denied: %s", d)
+	}
+}
+
+func TestShellQuotingAndHomeCannotHideCommands(t *testing.T) {
+	e := enforcer(t, mustParse(t, `{"version":1,"commands":{"deny":["curl","rm *"]},"paths":{"deny":["~/.ssh"]}}`, "p"))
+	for _, cmd := range []string{`$'curl' x`, `$'cu\x72l' x`, `$'\x63url' x`, `$'\143url' x`, `$'curl' x`, `$"curl" x`, `c$'ur'l x`,
+		"rm *.log", "rm *", "cat $HOME/.ssh/id_rsa", "cat ${HOME}/.ssh/id_rsa"} {
+		if d := e.CheckCommand(cmd, "/home/alice/proj"); d.Allowed {
+			t.Errorf("%q was allowed", cmd)
+		}
+	}
+	for _, cmd := range []string{`echo $'curl is a word'`, "echo $HOMEWORK/.ssh", "rmdir x"} {
+		if d := e.CheckCommand(cmd, "/home/alice/proj"); !d.Allowed {
+			t.Errorf("%q was denied: %s", cmd, d)
+		}
+	}
+	if !globMatch("*", "*x") || !globMatch("a*", "a*b") || globMatch("a*c", "a*b") {
+		t.Error("globMatch mishandles a literal * in the subject")
 	}
 }
 
