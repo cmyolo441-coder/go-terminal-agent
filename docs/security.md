@@ -291,9 +291,15 @@ deleting, inserting or reordering a record breaks the chain.
 ### Verifying
 
 In GTA: `/audit verify`. It checks every segment in order and reports the
-first broken link (file, line, sequence, reason).
+first broken link (file, line, sequence, reason). When the policy sets
+`audit.hmac_key_file`, it verifies with that key and also rejects records
+that are not HMAC-signed, since anyone who can write the files could
+otherwise rewrite the log as an unkeyed chain. Records written before the
+key was configured therefore show as broken; archive those segments, or
+check them with the script below.
 
-Outside GTA, this script does the same check (Python 3, no dependencies):
+Outside GTA, this script does the same check (Python 3, no dependencies;
+unlike `/audit verify` it accepts unsigned records in a keyed log):
 
 ```python
 #!/usr/bin/env python3
@@ -331,10 +337,6 @@ server) to detect truncation of the newest records. Without an HMAC key, an
 attacker who can write the files can recompute every hash; use
 `audit.hmac_key_file` with a key users cannot read for real tamper
 resistance.
-
-> Note: `/audit verify` does not pass the HMAC key to the verifier, so on an
-> HMAC-keyed log it reports the first record as broken ("verification needs
-> the key"). Use the script above with the key file instead.
 
 ## Secret redaction
 

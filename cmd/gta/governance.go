@@ -26,6 +26,8 @@ type governance struct {
 	gov      *agent.Governance
 	logger   *audit.FileLogger
 	auditDir string
+	// hmacKey is the policy's audit HMAC key, for /audit verify.
+	hmacKey  []byte
 	warnings []string
 }
 
@@ -115,7 +117,7 @@ func (g *governance) build(cfg config.Config, root, sessionID string) error {
 		case err != nil:
 			g.warnings = append(g.warnings, "audit log off: "+err.Error())
 		default:
-			g.logger, g.auditDir = lg, dir
+			g.logger, g.auditDir, g.hmacKey = lg, dir, key
 			gov.Audit, gov.AuditRequired = lg, req.Required
 			_ = lg.Log(audit.Record{Event: audit.EventSessionStart, Provider: cfg.Provider, Model: cfg.Model})
 			for _, c := range g.changes {
@@ -219,14 +221,25 @@ func (g *governance) auditReport(arg string) (string, error) {
 		if err := g.logger.Flush(); err != nil {
 			return "", err
 		}
-		rep, err := audit.Verify(g.auditDir, audit.VerifyOptions{})
+		// With a key, unsigned records are rejected too: otherwise anyone
+		// who can write the files could rewrite the log without the key.
+		keyed := len(g.hmacKey) > 0
+		rep, err := audit.Verify(g.auditDir, audit.VerifyOptions{HMACKey: g.hmacKey, RequireHMAC: keyed})
 		if err != nil {
 			return "", err
 		}
 		if !rep.OK() {
-			return fmt.Sprintf("⚠ The audit log is **broken** at %s", rep.Broken.String()), nil
+			msg := fmt.Sprintf("⚠ The audit log is **broken** at %s", rep.Broken.String())
+			if keyed && strings.Contains(rep.Broken.Reason, "not HMAC") {
+				msg += "\n\nThe policy sets an HMAC key, so every record must be HMAC-signed. Records written before the key was configured are not; archive those segments, or check them with the verification script in docs/security.md."
+			}
+			return msg, nil
 		}
-		return fmt.Sprintf("✓ Hash chain intact: %d records in %d file(s), seq %d–%d, head `%s`.", rep.Records, rep.Files, rep.FirstSeq, rep.LastSeq, clipHash(rep.LastHash)), nil
+		alg := "SHA-256"
+		if keyed {
+			alg = "HMAC-SHA256"
+		}
+		return fmt.Sprintf("✓ Hash chain intact (%s): %d records in %d file(s), seq %d–%d, head `%s`.", alg, rep.Records, rep.Files, rep.FirstSeq, rep.LastSeq, clipHash(rep.LastHash)), nil
 	case fields[0] == "tail":
 		n := 15
 		if len(fields) > 1 {
