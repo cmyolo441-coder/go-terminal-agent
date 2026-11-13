@@ -624,3 +624,29 @@ func TestGlobMatch(t *testing.T) {
 		}
 	}
 }
+
+// TestPathRuleWrittenThroughSymlink covers a rule whose own path goes
+// through a symlink, as /var does on macOS (/private/var).
+func TestPathRuleWrittenThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	os.MkdirAll(filepath.Join(real, "vault"), 0o700)
+	os.WriteFile(filepath.Join(real, "vault", "key"), []byte("k"), 0o600)
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	p := mustParse(t, `{"version":1,"paths":{"deny":["`+filepath.ToSlash(filepath.Join(alias, "vault"))+`"]}}`, "p")
+	e := enforcer(t, p)
+	for _, path := range []string{filepath.Join(real, "vault", "key"), filepath.Join(alias, "vault", "key"), filepath.Join(real, "vault", "new")} {
+		if d := e.CheckPath(path, dir, true); d.Allowed {
+			t.Errorf("%s is under the protected directory", path)
+		}
+	}
+	if d := e.CheckPath(filepath.Join(real, "other"), dir, true); !d.Allowed {
+		t.Errorf("unrelated path denied: %+v", d)
+	}
+}

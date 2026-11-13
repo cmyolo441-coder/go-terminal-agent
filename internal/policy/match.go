@@ -113,6 +113,10 @@ func (c cmdPattern) match(cmd string) bool {
 type pathPattern struct {
 	raw  string
 	glob string
+	// alt is the pattern with symlinks in its literal prefix resolved
+	// (macOS /var is /private/var), or "" when that changes nothing. A
+	// path matches either form, so a rule holds however it was written.
+	alt string
 }
 
 func compilePath(p, home string, fold bool) (pathPattern, error) {
@@ -134,13 +138,51 @@ func compilePath(p, home string, fold bool) (pathPattern, error) {
 	if len(p) > 1 {
 		p = strings.TrimSuffix(p, "/")
 	}
+	alt := resolvePatternPrefix(p)
 	if fold {
-		p = strings.ToLower(p)
+		p, alt = strings.ToLower(p), strings.ToLower(alt)
 	}
 	if !doublestar.ValidatePattern(p) {
 		return pathPattern{}, fmt.Errorf("invalid glob %q", raw)
 	}
-	return pathPattern{raw: raw, glob: p}, nil
+	if alt == p || !doublestar.ValidatePattern(alt) {
+		alt = ""
+	}
+	return pathPattern{raw: raw, glob: p, alt: alt}, nil
+}
+
+// resolvePatternPrefix resolves symlinks in the literal leading directories
+// of an absolute slash pattern and returns the rewritten pattern, or "" when
+// the pattern is relative or its prefix does not exist.
+func resolvePatternPrefix(p string) string {
+	if !isAbsSlash(p) {
+		return ""
+	}
+	parts := strings.Split(p, "/")
+	n := len(parts)
+	for i, seg := range parts {
+		if strings.ContainsAny(seg, "*?[{\\") {
+			n = i
+			break
+		}
+	}
+	for ; n > 1; n-- {
+		prefix := strings.Join(parts[:n], "/")
+		if prefix == "" {
+			return ""
+		}
+		r, err := filepath.EvalSymlinks(filepath.FromSlash(prefix))
+		if err != nil {
+			continue
+		}
+		rest := strings.Join(parts[n:], "/")
+		out := filepath.ToSlash(r)
+		if rest != "" {
+			out = strings.TrimSuffix(out, "/") + "/" + rest
+		}
+		return out
+	}
+	return ""
 }
 
 // isAbsSlash reports /x and C:/x style absolute paths.
@@ -157,12 +199,20 @@ func (pp pathPattern) match(p string) bool {
 		if ok, _ := doublestar.Match(pp.glob, p); ok {
 			return true
 		}
+		if pp.alt != "" {
+			if ok, _ := doublestar.Match(pp.alt, p); ok {
+				return true
+			}
+		}
 		i := strings.LastIndexByte(p, '/')
 		if i <= 0 || (i == 2 && p[1] == ':') {
 			// Root: try it, then stop.
 			root := p[:i+1]
 			if root != p && root != "" {
 				ok, _ := doublestar.Match(pp.glob, root)
+				if !ok && pp.alt != "" {
+					ok, _ = doublestar.Match(pp.alt, root)
+				}
 				return ok
 			}
 			return false
