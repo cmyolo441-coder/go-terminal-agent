@@ -70,6 +70,10 @@ func argumentText(raw json.RawMessage) string {
 		return ""
 	}
 	if raw[0] == '"' {
+		p := jsonParser{b: raw}
+		if s, ok := p.str(""); ok && p.i == len(raw) {
+			return s
+		}
 		var s string
 		if json.Unmarshal(raw, &s) == nil {
 			return s
@@ -372,6 +376,7 @@ func (p *Provider) read(ctx, actx context.Context, cancel context.CancelCauseFun
 	}
 
 	sawData, done := false, false
+	var dec chunkDecoder
 	err := readSSE(resp.Body, touch, func(data []byte) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return true, err
@@ -380,15 +385,18 @@ func (p *Provider) read(ctx, actx context.Context, cancel context.CancelCauseFun
 			done = true
 			return true, nil
 		}
-		var c chunk
-		if err := json.Unmarshal(data, &c); err != nil {
-			return true, fmt.Errorf("%s: the server sent a malformed stream chunk: %w", p.opts.Name, err)
+		c, ok := dec.decode(data)
+		if !ok {
+			c = new(chunk)
+			if err := json.Unmarshal(data, c); err != nil {
+				return true, fmt.Errorf("%s: the server sent a malformed stream chunk: %w", p.opts.Name, err)
+			}
 		}
-		if err := p.streamError(&c, model); err != nil {
+		if err := p.streamError(c, model); err != nil {
 			return true, err
 		}
 		sawData = true
-		acc.addChunk(&c)
+		acc.addChunk(c)
 		return false, nil
 	})
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -486,25 +494,40 @@ const maxEventBytes = 64 << 20
 
 var errEventTooLarge = fmt.Errorf("the server sent a stream event larger than %d MiB", maxEventBytes>>20)
 
+// keepLongBytes is the largest overflow buffer readSSELine keeps for the
+// next long line; a bigger one is left to the garbage collector.
+const keepLongBytes = 1 << 20
+
 // readSSELine reads one line, failing with errEventTooLarge rather than
 // buffering a line longer than maxEventBytes. touch is called whenever
 // bytes arrive, so a long line arriving slowly does not trip the idle
-// timer.
-func readSSELine(br *bufio.Reader, touch func()) ([]byte, error) {
-	var line []byte
+// timer. A line that fits the reader's buffer is returned without a copy
+// and is only valid until the next read; a longer one is gathered in
+// *long, which is reused.
+func readSSELine(br *bufio.Reader, touch func(), long *[]byte) ([]byte, error) {
+	chunk, err := br.ReadSlice('\n')
+	if len(chunk) > 0 {
+		touch()
+	}
+	if !errors.Is(err, bufio.ErrBufferFull) && len(chunk) <= maxEventBytes {
+		return chunk, err
+	}
+	line := (*long)[:0]
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if len(chunk) > 0 {
-			touch()
-		}
 		if len(line)+len(chunk) > maxEventBytes {
 			return nil, errEventTooLarge
 		}
 		line = append(line, chunk...)
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			if cap(line) <= keepLongBytes {
+				*long = line
+			}
+			return line, err
 		}
-		return line, err
+		chunk, err = br.ReadSlice('\n')
+		if len(chunk) > 0 {
+			touch()
+		}
 	}
 }
 
@@ -525,22 +548,24 @@ func endsLikeJSON(b []byte) bool {
 // readSSE parses a Server-Sent Events stream, calling handle with each
 // event's data until handle reports done, the body ends or reading fails.
 // Comment lines (keep-alives such as ": OPENROUTER PROCESSING") and fields
-// other than data are ignored. touch is called whenever bytes arrive.
+// other than data are ignored. touch is called whenever bytes arrive. The
+// data passed to handle is only valid during the call.
 func readSSE(r io.Reader, touch func(), handle func(data []byte) (bool, error)) error {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var buf bytes.Buffer
+	var long []byte // reused for lines longer than the reader's buffer
 	hasData := false
 	dispatch := func() (bool, error) {
 		if !hasData {
 			return false, nil
 		}
-		data := append([]byte(nil), buf.Bytes()...)
-		buf.Reset()
 		hasData = false
-		return handle(data)
+		stop, err := handle(buf.Bytes())
+		buf.Reset()
+		return stop, err
 	}
 	for {
-		line, rerr := readSSELine(br, touch)
+		line, rerr := readSSELine(br, touch, &long)
 		if errors.Is(rerr, errEventTooLarge) {
 			return rerr
 		}
