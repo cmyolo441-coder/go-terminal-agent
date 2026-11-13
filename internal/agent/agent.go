@@ -57,6 +57,9 @@ type Agent struct {
 	// BeforeWrite, when set, is called before any file-changing tool runs,
 	// for example to checkpoint the files it is about to touch.
 	BeforeWrite func(call *tools.Call)
+	// BeforeTurn, when set, is called with the user's text at the start of
+	// every Run, for example to open a new checkpoint.
+	BeforeTurn func(prompt string)
 
 	mu       sync.Mutex
 	settings Settings
@@ -179,6 +182,9 @@ var ErrInterrupted = errors.New("interrupted")
 // Run sends a user message and drives the loop until the model finishes.
 func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 	blocks := user.Blocks
+	if a.BeforeTurn != nil {
+		a.BeforeTurn(user.Text())
+	}
 	if a.Hooks.Has(hooks.UserPromptSubmit) {
 		res, err := a.Hooks.UserPromptSubmit(ctx, user.Text())
 		if err != nil {

@@ -139,7 +139,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := buildSandbox(cfg, env); err != nil {
+	policy, err := buildSandbox(cfg, env)
+	if err != nil {
 		return err
 	}
 
@@ -182,6 +183,11 @@ func run(args []string) error {
 	})
 	ag.Hooks = hookRunner
 	addTaskTool(ag, cfg, root)
+	cp, cpErr := setupCheckpoints(ag, sess.ID)
+	if cpErr != nil {
+		fmt.Fprintln(os.Stderr, "gta: checkpoints disabled:", cpErr)
+	}
+	registerCommands(root, cfg, cp, hookRunner, policy)
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}
