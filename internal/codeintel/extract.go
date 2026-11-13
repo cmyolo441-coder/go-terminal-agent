@@ -27,7 +27,7 @@ const (
 
 // pattern recognises one kind of definition on a masked source line.
 type pattern struct {
-	re   *regexp.Regexp
+	re   *lazyRegexp
 	kind SymbolKind
 	// kindFrom maps the text of the "kind" group to a symbol kind.
 	kindFrom map[string]SymbolKind
@@ -44,7 +44,7 @@ type pattern struct {
 	// ctorOnly: the name must equal the enclosing container's name.
 	ctorOnly bool
 	// skipIf rejects lines that match the pattern but are not definitions.
-	skipIf *regexp.Regexp
+	skipIf *lazyRegexp
 	// ignoreScope: the pattern is anchored at column 0 and always names a
 	// top-level definition, even when broken braces confuse the scopes.
 	ignoreScope bool
@@ -60,7 +60,8 @@ type langPattern struct {
 	docstring bool
 }
 
-func rx(s string) *regexp.Regexp { return regexp.MustCompile(s) }
+// rx declares an extractor pattern; it is compiled on first use.
+func rx(s string) *lazyRegexp { return newLazyRegexp(s) }
 
 var jsReject = setOf("if", "for", "while", "switch", "catch", "return", "function", "typeof",
 	"new", "else", "do", "try", "with", "super", "await", "yield", "throw", "delete", "void",
@@ -376,7 +377,7 @@ func extractPatterns(lang string, lp *langPattern, src string) []Symbol {
 }
 
 // group returns the text and start column of a named group.
-func group(re *regexp.Regexp, s string, sm []int, name string) (string, int) {
+func group(re *lazyRegexp, s string, sm []int, name string) (string, int) {
 	i := re.SubexpIndex(name)
 	if i < 0 || 2*i+1 >= len(sm) || sm[2*i] < 0 {
 		return "", -1

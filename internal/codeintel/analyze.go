@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -84,6 +85,17 @@ func (in *interner) internAll(ss []string) {
 			in.m[s] = s
 		}
 	}
+}
+
+// intern returns the canonical copy of s.
+func (in *interner) intern(s string) string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if v, ok := in.m[s]; ok {
+		return v
+	}
+	in.m[s] = s
+	return s
 }
 
 func (in *interner) internEntry(e *fileEntry) {
@@ -170,21 +182,37 @@ func pathTerms(rel string) []string {
 }
 
 // collectRefs lists the distinct identifiers of at least three characters
-// used in src, for the reference graph.
+// used in src, for the reference graph. The result shares one string
+// allocation and does not keep src alive.
 func collectRefs(src string) []string {
 	seen := map[string]bool{}
 	var out []string
+	var tb termBuf
+	size := 0
 	identifiers(src, func(w string) {
 		if len(w) < 3 || len(w) > 80 || seen[w] || len(out) >= maxRefsPerFile {
 			return
 		}
-		if codeKeywords[strings.ToLower(w)] {
+		// Lower-casing never shrinks a rune by more than 4 bytes to 1.
+		if len(w) <= 4*maxKeywordLen && codeKeywords[lowerInto(&tb, w, "", "")] {
 			return
 		}
 		seen[w] = true
 		out = append(out, w)
+		size += len(w)
 	})
 	sort.Strings(out)
+	var b strings.Builder
+	b.Grow(size)
+	for _, w := range out {
+		b.WriteString(w)
+	}
+	all := b.String()
+	off := 0
+	for i, w := range out {
+		out[i] = all[off : off+len(w)]
+		off += len(w)
+	}
 	return out
 }
 
@@ -302,12 +330,35 @@ func buildChunks(lines []string, syms []Symbol) []chunk {
 			inner[ci] = append(inner[ci], i)
 		}
 	}
+	// Terms are counted per chunk in a dense array indexed by a per-file
+	// term id, so each distinct term of the file is allocated once.
+	var (
+		dict    = termDict{ids: make(map[string]int32, 256)}
+		acc     []float32
+		stamp   []int32
+		touched []int32
+		tb      termBuf
+		cur     int32
+	)
+	add := func(text string, w float32, a analyzer) {
+		a.scan(text, &tb, func(t string) {
+			id := dict.id(t)
+			if int(id) >= len(acc) {
+				acc = append(acc, 0)
+				stamp = append(stamp, 0)
+			}
+			if stamp[id] != cur {
+				stamp[id] = cur
+				acc[id] = 0
+				touched = append(touched, id)
+			}
+			acc[id] += w
+		})
+	}
 	for ci := range chunks {
 		c := &chunks[ci]
-		tf := map[string]float32{}
-		add := func(text string, w float32, a analyzer) {
-			a.terms(text, func(t string) { tf[t] += w })
-		}
+		cur = int32(ci + 1)
+		touched = touched[:0]
 		for l := c.Start; l <= c.End; l++ {
 			add(lines[l-1], weightCode, analyzer{})
 		}
@@ -328,20 +379,37 @@ func buildChunks(lines []string, syms []Symbol) []chunk {
 		for _, i := range inner[ci] {
 			add(syms[i].Name, weightInnerName, analyzer{keepKeywords: true})
 		}
-		c.Terms = make([]string, 0, len(tf))
-		for t := range tf {
-			c.Terms = append(c.Terms, t)
-		}
-		sort.Strings(c.Terms)
-		c.Freqs = make([]float32, len(c.Terms))
+		slices.SortFunc(touched, func(a, b int32) int { return strings.Compare(dict.terms[a], dict.terms[b]) })
+		c.Terms = make([]string, len(touched))
+		c.Freqs = make([]float32, len(touched))
 		var total float32
-		for i, t := range c.Terms {
-			c.Freqs[i] = tf[t]
-			total += tf[t]
+		for i, id := range touched {
+			c.Terms[i] = dict.terms[id]
+			c.Freqs[i] = acc[id]
+			total += acc[id]
 		}
 		c.Length = total
 	}
 	return chunks
+}
+
+// termDict assigns ids to the distinct terms of one file.
+type termDict struct {
+	ids   map[string]int32
+	terms []string
+}
+
+// id returns the id of t, copying t when it is new: t may alias scratch
+// memory.
+func (d *termDict) id(t string) int32 {
+	if id, ok := d.ids[t]; ok {
+		return id
+	}
+	s := strings.Clone(t)
+	id := int32(len(d.terms))
+	d.terms = append(d.terms, s)
+	d.ids[s] = id
+	return id
 }
 
 func allBlank(lines []string) bool {

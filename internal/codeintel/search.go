@@ -41,26 +41,68 @@ type searchIndex struct {
 	postings  map[string][]posting
 	vocab     []string // sorted, for prefix expansion
 	pathTerms map[string][]uint32
+	isTest    []bool // per file: isTestPath(files[i].Path)
 }
 
 func buildSearchIndex(files []*fileEntry) *searchIndex {
-	si := &searchIndex{files: files, postings: map[string][]posting{}, pathTerms: map[string][]uint32{}}
+	si := &searchIndex{files: files, pathTerms: map[string][]uint32{}, isTest: make([]bool, len(files))}
+	nchunks := 0
+	for _, f := range files {
+		nchunks += len(f.Chunks)
+	}
+	si.chunkFile = make([]uint32, 0, nchunks)
+	si.chunkIdx = make([]uint32, 0, nchunks)
+	si.chunkLen = make([]float32, 0, nchunks)
+	// Two passes: number the terms and count their postings, then fill
+	// one shared postings array, so each term costs one map insert.
+	ids := make(map[string]int32, nchunks)
+	var terms []string
+	var counts []int32
+	var occ []int32 // term id of every (chunk, term) pair, in order
 	total := 0.0
 	for fi, f := range files {
+		si.isTest[fi] = isTestPath(f.Path)
 		for _, t := range f.PathTerms {
 			si.pathTerms[t] = append(si.pathTerms[t], uint32(fi))
 		}
 		for ci := range f.Chunks {
 			c := &f.Chunks[ci]
-			id := uint32(len(si.chunkFile))
 			si.chunkFile = append(si.chunkFile, uint32(fi))
 			si.chunkIdx = append(si.chunkIdx, uint32(ci))
 			si.chunkLen = append(si.chunkLen, c.Length)
 			total += float64(c.Length)
-			for k, t := range c.Terms {
-				si.postings[t] = append(si.postings[t], posting{chunk: id, tf: c.Freqs[k]})
+			for _, t := range c.Terms {
+				id, ok := ids[t]
+				if !ok {
+					id = int32(len(terms))
+					ids[t] = id
+					terms = append(terms, t)
+					counts = append(counts, 0)
+				}
+				counts[id]++
+				occ = append(occ, id)
 			}
 		}
+	}
+	start := make([]int32, len(terms)+1)
+	for id, n := range counts {
+		start[id+1] = start[id] + n
+	}
+	all := make([]posting, len(occ))
+	next := append([]int32(nil), start[:len(terms)]...)
+	k := 0
+	for chunk := range si.chunkFile {
+		c := &files[si.chunkFile[chunk]].Chunks[si.chunkIdx[chunk]]
+		for ti := range c.Terms {
+			id := occ[k]
+			k++
+			all[next[id]] = posting{chunk: uint32(chunk), tf: c.Freqs[ti]}
+			next[id]++
+		}
+	}
+	si.postings = make(map[string][]posting, len(terms))
+	for id, t := range terms {
+		si.postings[t] = all[start[id]:start[id+1]:start[id+1]]
 	}
 	if n := len(si.chunkFile); n > 0 {
 		si.avgLen = total / float64(n)
@@ -68,10 +110,7 @@ func buildSearchIndex(files []*fileEntry) *searchIndex {
 	if si.avgLen <= 0 {
 		si.avgLen = 1
 	}
-	si.vocab = make([]string, 0, len(si.postings))
-	for t := range si.postings {
-		si.vocab = append(si.vocab, t)
-	}
+	si.vocab = terms
 	sort.Strings(si.vocab)
 	return si
 }
@@ -301,11 +340,13 @@ func (ix *Index) Search(ctx context.Context, query string, opts SearchOptions) (
 	if err != nil {
 		return nil, err
 	}
-	hits := s.search.search(ctx, query, opts)
+	si := s.searchIndex()
+	pq := si.parseQuery(query)
+	hits := si.searchParsed(ctx, pq, opts)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ix.attachSnippets(hits, s, query, opts)
+	ix.attachSnippets(hits, s, pq, opts)
 	return hits, nil
 }
 
@@ -354,6 +395,11 @@ func isTestPath(p string) bool {
 
 // search scores chunks and returns hits without snippets.
 func (si *searchIndex) search(ctx context.Context, query string, opts SearchOptions) []Hit {
+	return si.searchParsed(ctx, si.parseQuery(query), opts)
+}
+
+// searchParsed is search for an analysed query.
+func (si *searchIndex) searchParsed(ctx context.Context, pq parsedQuery, opts SearchOptions) []Hit {
 	if opts.Limit <= 0 {
 		opts.Limit = 10
 	}
@@ -363,7 +409,6 @@ func (si *searchIndex) search(ctx context.Context, query string, opts SearchOpti
 	if opts.MaxPerFile <= 0 {
 		opts.MaxPerFile = 3
 	}
-	pq := si.parseQuery(query)
 	if len(pq.terms) == 0 || len(si.chunkFile) == 0 {
 		return nil
 	}
@@ -379,13 +424,18 @@ func (si *searchIndex) search(ctx context.Context, query string, opts SearchOpti
 	if nq > 64 {
 		nq = 64
 	}
-	scores := map[uint32]float64{}
-	masks := map[uint32]uint64{}
+	// Dense per-chunk accumulators: scored lists the chunks that have a
+	// score, bestTouched the chunks the current query term matched.
+	nc := len(si.chunkFile)
+	scores := make([]float64, nc)
+	masks := make([]uint64, nc)
+	best := make([]float64, nc)
+	var scored, bestTouched []uint32
 	for qi := 0; qi < nq; qi++ {
 		if ctx.Err() != nil {
 			return nil
 		}
-		best := map[uint32]float64{}
+		bestTouched = bestTouched[:0]
 		for t, w := range pq.terms[qi].expansion {
 			ps := si.postings[t]
 			idf := si.idf(len(ps))
@@ -395,26 +445,44 @@ func (si *searchIndex) search(ctx context.Context, query string, opts SearchOpti
 				}
 				tf := float64(p.tf)
 				norm := tf * (bm25K1 + 1) / (tf + bm25K1*(1-bm25B+bm25B*float64(si.chunkLen[p.chunk])/si.avgLen))
-				if v := w * idf * norm; v > best[p.chunk] {
-					best[p.chunk] = v
+				v := w * idf * norm
+				old := best[p.chunk]
+				if !(v > old) {
+					continue
 				}
+				if old == 0 {
+					bestTouched = append(bestTouched, p.chunk)
+				}
+				best[p.chunk] = v
 			}
 		}
-		for c, v := range best {
-			scores[c] += v
+		for _, c := range bestTouched {
+			if masks[c] == 0 {
+				scored = append(scored, c)
+			}
+			scores[c] += best[c]
 			masks[c] |= 1 << uint(qi)
+			best[c] = 0
 		}
 	}
 	// Path matches: a query word naming the file's path counts toward
-	// coverage and adds a field score.
-	pathMask := map[uint32]uint64{}
-	pathScore := map[uint32]float64{}
-	nf := float64(len(si.files))
+	// coverage and adds a field score. Expansions are visited in sorted
+	// order so the result does not depend on map iteration.
+	nfiles := len(si.files)
+	pathMask := make([]uint64, nfiles)
+	pathScore := make([]float64, nfiles)
+	nf := float64(nfiles)
+	var keys []string
 	for qi := 0; qi < nq; qi++ {
+		keys = keys[:0]
 		for t, w := range pq.terms[qi].expansion {
-			if w < expandPrefix*0.8 {
-				continue
+			if w >= expandPrefix*0.8 {
+				keys = append(keys, t)
 			}
+		}
+		sort.Strings(keys)
+		for _, t := range keys {
+			w := pq.terms[qi].expansion[t]
 			fs := si.pathTerms[t]
 			idf := math.Log(1 + (nf-float64(len(fs))+0.5)/(float64(len(fs))+0.5))
 			for _, fi := range fs {
@@ -425,13 +493,15 @@ func (si *searchIndex) search(ctx context.Context, query string, opts SearchOpti
 			}
 		}
 	}
-	type scored struct {
+	type scoredChunk struct {
 		chunk uint32
 		score float64
 		mask  uint64
 	}
-	results := make([]scored, 0, len(scores))
-	for c, sc := range scores {
+	sb := symbolBooster{pq: pq, nq: nq, names: map[string]nameMatch{}}
+	results := make([]scoredChunk, 0, len(scored))
+	for _, c := range scored {
+		sc := scores[c]
 		fi := si.chunkFile[c]
 		f := si.files[fi]
 		ch := &f.Chunks[si.chunkIdx[c]]
@@ -440,15 +510,15 @@ func (si *searchIndex) search(ctx context.Context, query string, opts SearchOpti
 		cov := float64(popcount(mask)) / float64(nq)
 		sc *= 0.3 + 0.7*cov*cov
 		if sym := f.symbol(ch.Symbol); sym != nil {
-			sc *= si.symbolBoost(sym, pq, nq)
+			sc *= sb.boost(sym)
 		}
-		if !pq.tests && isTestPath(f.Path) {
+		if !pq.tests && si.isTest[fi] {
 			sc *= 0.7
 		}
 		if !pq.docs && (f.Lang == LangMarkdown || f.Lang == LangText) {
 			sc *= 0.8
 		}
-		results = append(results, scored{c, sc, mask})
+		results = append(results, scoredChunk{c, sc, mask})
 	}
 	sort.Slice(results, func(a, b int) bool {
 		if results[a].score != results[b].score {
@@ -497,39 +567,51 @@ func popcount(x uint64) int {
 	return n
 }
 
-// symbolBoost rewards chunks whose own symbol name matches the query.
-func (si *searchIndex) symbolBoost(sym *Symbol, pq parsedQuery, nq int) float64 {
+// symbolBooster computes symbolBoost for the chunks of one query,
+// analysing each distinct symbol name once.
+type symbolBooster struct {
+	pq    parsedQuery
+	nq    int
+	tb    termBuf
+	names map[string]nameMatch
+}
+
+// nameMatch is how a symbol name's terms meet the query.
+type nameMatch struct {
+	terms, hits int    // name terms, and those matching some query term
+	qhit        uint64 // query terms matched by a name term
+}
+
+// boost rewards chunks whose own symbol name matches the query.
+func (sb *symbolBooster) boost(sym *Symbol) float64 {
+	pq, nq := sb.pq, sb.nq
 	boost := 1.0
-	lname := strings.ToLower(sym.Name)
-	if pq.idents[lname] || pq.idents[strings.ToLower(sym.QualifiedName())] {
+	if pq.idents[lowerInto(&sb.tb, sym.Name, "", "")] ||
+		(sym.Container != "" && pq.idents[lowerInto(&sb.tb, sym.Container, ".", sym.Name)]) {
 		boost *= 2.5
 	}
-	var nameTerms []string
-	analyzer{keepKeywords: true}.terms(sym.Name, func(t string) { nameTerms = append(nameTerms, t) })
-	if len(nameTerms) == 0 {
+	m, ok := sb.names[sym.Name]
+	if !ok {
+		analyzer{keepKeywords: true}.scan(sym.Name, &sb.tb, func(nt string) {
+			m.terms++
+			matched := false
+			for qi := 0; qi < nq; qi++ {
+				if w, ok := pq.terms[qi].expansion[nt]; ok && w >= expandSynonym {
+					matched = true
+					m.qhit |= 1 << uint(qi)
+				}
+			}
+			if matched {
+				m.hits++
+			}
+		})
+		sb.names[sym.Name] = m
+	}
+	if m.terms == 0 {
 		return boost
 	}
-	hitName, hitQuery := 0, 0
-	qhit := make([]bool, nq)
-	for _, nt := range nameTerms {
-		matched := false
-		for qi := 0; qi < nq; qi++ {
-			if w, ok := pq.terms[qi].expansion[nt]; ok && w >= expandSynonym {
-				matched = true
-				qhit[qi] = true
-			}
-		}
-		if matched {
-			hitName++
-		}
-	}
-	for _, h := range qhit {
-		if h {
-			hitQuery++
-		}
-	}
-	frac := float64(hitName) / float64(len(nameTerms))
-	qcov := float64(hitQuery) / float64(nq)
+	frac := float64(m.hits) / float64(m.terms)
+	qcov := float64(popcount(m.qhit)) / float64(nq)
 	boost *= 1 + 1.2*frac*qcov
 	if sym.Kind.isCallable() || sym.Kind.isTypeLike() {
 		boost *= 1.1
@@ -537,8 +619,19 @@ func (si *searchIndex) symbolBoost(sym *Symbol, pq parsedQuery, nq int) float64 
 	return boost
 }
 
+// lowerInto returns strings.ToLower(a + sep + b), built in tb when it is
+// ASCII, in which case the result aliases tb.
+func lowerInto(tb *termBuf, a, sep, b string) string {
+	if !isASCII(a) || !isASCII(b) {
+		return strings.ToLower(a + sep + b)
+	}
+	tb.b = append(append(append(tb.b[:0], a...), sep...), b...)
+	tb.lower()
+	return tb.str()
+}
+
 // attachSnippets reads the hit files and picks the most relevant lines.
-func (ix *Index) attachSnippets(hits []Hit, s *snapshot, query string, opts SearchOptions) {
+func (ix *Index) attachSnippets(hits []Hit, s *snapshot, pq parsedQuery, opts SearchOptions) {
 	if len(hits) == 0 {
 		return
 	}
@@ -549,7 +642,6 @@ func (ix *Index) attachSnippets(hits []Hit, s *snapshot, query string, opts Sear
 	if n > 40 {
 		n = 40
 	}
-	pq := s.search.parseQuery(query)
 	cache := map[string][]string{}
 	for i := range hits {
 		h := &hits[i]
@@ -579,9 +671,10 @@ func pickSnippet(lines []string, h *Hit, terms map[string]bool, n int) []Snippet
 		return nil
 	}
 	match := make([]bool, end-start+1)
+	var tb termBuf
 	for l := start; l <= end; l++ {
 		hit := false
-		analyzer{keepKeywords: true}.terms(lines[l-1], func(t string) {
+		analyzer{keepKeywords: true}.scan(lines[l-1], &tb, func(t string) {
 			if terms[t] {
 				hit = true
 			}

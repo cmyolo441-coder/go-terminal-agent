@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Repo map parameters.
@@ -24,10 +25,19 @@ const (
 // refGraph is the file-level reference graph of a snapshot.
 type refGraph struct {
 	files []*fileEntry // code files only, same order as s.files subset
-	out   []map[int]float64
-	// symRefs[f][i] counts the files referencing symbol i of file f.
-	symRefs []map[int]int
+	// The out edges of file i are outTo[outStart[i]:outStart[i+1]] with
+	// weights outW, sorted by target.
+	outStart []int
+	outTo    []int32
+	outW     []float64
+	outSum   []float64 // total out weight per file
+	// symRefs[f][i] counts the files referencing symbol i of file f; nil
+	// when no symbol of f is referenced.
+	symRefs [][]int32
 	inDeg   []int
+
+	defaultOnce sync.Once
+	defaultRank []float64 // pageRank(nil), computed once
 }
 
 // isMapLanguage reports whether files of lang belong in the repo map.
@@ -46,8 +56,9 @@ func buildRefGraph(files []*fileEntry) *refGraph {
 		}
 	}
 	n := len(g.files)
-	g.out = make([]map[int]float64, n)
-	g.symRefs = make([]map[int]int, n)
+	g.outStart = make([]int, n+1)
+	g.outSum = make([]float64, n)
+	g.symRefs = make([][]int32, n)
 	g.inDeg = make([]int, n)
 	type def = struct{ file, sym int }
 	defs := map[string][]def{}
@@ -60,25 +71,39 @@ func buildRefGraph(files []*fileEntry) *refGraph {
 			defs[s.Name] = append(defs[s.Name], def{fi, si})
 		}
 	}
+	// Scratch indexed by file: stamp marks files seen for the current
+	// reference (targets) or source file (edges).
+	targetStamp := make([]int, n)
+	edgeStamp := make([]int, n)
+	edgeW := make([]float64, n)
+	var targets, edges []int
+	refN := 0
 	for name, ds := range defs {
-		files := map[int]bool{}
+		refN++
+		count := 0
 		for _, d := range ds {
-			files[d.file] = true
+			if targetStamp[d.file] != refN {
+				targetStamp[d.file] = refN
+				count++
+			}
 		}
-		if len(files) > maxDefiningFiles {
+		if count > maxDefiningFiles {
 			delete(defs, name)
 		}
 	}
 	for fi, f := range g.files {
+		edges = edges[:0]
 		for _, ref := range f.Refs {
 			ds := defs[ref]
 			if len(ds) == 0 {
 				continue
 			}
-			targets := map[int]bool{}
+			refN++
+			targets = targets[:0]
 			for _, d := range ds {
-				if d.file != fi {
-					targets[d.file] = true
+				if d.file != fi && targetStamp[d.file] != refN {
+					targetStamp[d.file] = refN
+					targets = append(targets, d.file)
 				}
 			}
 			if len(targets) == 0 {
@@ -90,20 +115,27 @@ func buildRefGraph(files []*fileEntry) *refGraph {
 					continue
 				}
 				if g.symRefs[d.file] == nil {
-					g.symRefs[d.file] = map[int]int{}
+					g.symRefs[d.file] = make([]int32, len(g.files[d.file].Symbols))
 				}
 				g.symRefs[d.file][d.sym]++
 			}
-			for t := range targets {
-				if g.out[fi] == nil {
-					g.out[fi] = map[int]float64{}
-				}
-				if g.out[fi][t] == 0 {
+			for _, t := range targets {
+				if edgeStamp[t] != fi+1 {
+					edgeStamp[t] = fi + 1
+					edgeW[t] = 0
+					edges = append(edges, t)
 					g.inDeg[t]++
 				}
-				g.out[fi][t] += w
+				edgeW[t] += w
 			}
 		}
+		sort.Ints(edges)
+		for _, t := range edges {
+			g.outTo = append(g.outTo, int32(t))
+			g.outW = append(g.outW, edgeW[t])
+			g.outSum[fi] += edgeW[t]
+		}
+		g.outStart[fi+1] = len(g.outTo)
 	}
 	return g
 }
@@ -113,7 +145,7 @@ func buildRefGraph(files []*fileEntry) *refGraph {
 // method names shared by many types are weak.
 func refWeight(name string, ds []struct{ file, sym int }, files []*fileEntry) float64 {
 	w := 1.0
-	if len(SplitIdentifier(name)) >= 2 && len(name) >= 8 {
+	if len(name) >= 8 && identifierParts(name) >= 2 {
 		w *= 10
 	}
 	if strings.HasPrefix(name, "_") {
@@ -141,6 +173,15 @@ func (g *refGraph) pageRank(personal []float64) []float64 {
 	if n == 0 {
 		return nil
 	}
+	if personal == nil {
+		g.defaultOnce.Do(func() { g.defaultRank = g.computePageRank(nil) })
+		return append([]float64(nil), g.defaultRank...)
+	}
+	return g.computePageRank(personal)
+}
+
+func (g *refGraph) computePageRank(personal []float64) []float64 {
+	n := len(g.files)
 	p := personal
 	if p == nil {
 		p = make([]float64, n)
@@ -148,12 +189,7 @@ func (g *refGraph) pageRank(personal []float64) []float64 {
 			p[i] = 1 / float64(n)
 		}
 	}
-	outSum := make([]float64, n)
-	for i, m := range g.out {
-		for _, w := range m {
-			outSum[i] += w
-		}
-	}
+	outSum := g.outSum
 	rank := append([]float64(nil), p...)
 	next := make([]float64, n)
 	for iter := 0; iter < pageRankIters; iter++ {
@@ -164,12 +200,12 @@ func (g *refGraph) pageRank(personal []float64) []float64 {
 				dangling += rank[i]
 			}
 		}
-		for i, m := range g.out {
+		for i := 0; i < n; i++ {
 			if outSum[i] == 0 {
 				continue
 			}
-			for j, w := range m {
-				next[j] += pageRankDamping * rank[i] * w / outSum[i]
+			for e := g.outStart[i]; e < g.outStart[i+1]; e++ {
+				next[g.outTo[e]] += pageRankDamping * rank[i] * g.outW[e] / outSum[i]
 			}
 		}
 		delta := 0.0
@@ -186,8 +222,9 @@ func (g *refGraph) pageRank(personal []float64) []float64 {
 }
 
 func (s *snapshot) refGraph() *refGraph {
-	s.graphOnce.Do(func() { s.graph = buildRefGraph(s.files) })
-	return s.graph
+	d := s.derived
+	d.graphOnce.Do(func() { d.graph = buildRefGraph(d.files) })
+	return d.graph
 }
 
 // RepoMapOptions configure RepoMap.
@@ -327,8 +364,9 @@ func (ix *Index) RepoMap(ctx context.Context, opts RepoMapOptions) (string, erro
 	return b.String(), nil
 }
 
-// renderFileBlock renders one file with up to max key symbols.
-func renderFileBlock(f *fileEntry, refs map[int]int, max int) string {
+// renderFileBlock renders one file with up to max key symbols. refs[i]
+// counts the files referencing symbol i; refs may be nil.
+func renderFileBlock(f *fileEntry, refs []int32, max int) string {
 	var b strings.Builder
 	b.WriteString(f.Path)
 	b.WriteString("\n")
@@ -345,7 +383,10 @@ func renderFileBlock(f *fileEntry, refs map[int]int, max int) string {
 		if !mappable(s) {
 			continue
 		}
-		sc := float64(refs[i]) * 2
+		sc := 0.0
+		if refs != nil {
+			sc = float64(refs[i]) * 2
+		}
 		if s.Exported {
 			sc += 1
 		}

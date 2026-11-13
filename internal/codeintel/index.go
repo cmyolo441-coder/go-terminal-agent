@@ -105,15 +105,39 @@ type Index struct {
 
 // snapshot is one immutable state of the index.
 type snapshot struct {
-	all    map[string]*fileEntry // every known file, indexed or skipped
-	files  []*fileEntry          // indexed files sorted by path
-	search *searchIndex
-	stats  Stats
+	all   map[string]*fileEntry // every known file, indexed or skipped
+	files []*fileEntry          // indexed files sorted by path
+	stats Stats                 // Terms is filled in by Stats
 	// walkSkipped are the skip counts of the last scan, before the
 	// content-based skips of individual entries are added.
 	walkSkipped map[string]int
-	graphOnce   sync.Once
-	graph       *refGraph
+	// derived holds the search index and reference graph, built on first
+	// use. Snapshots with the same files share it, so a refresh that
+	// changed nothing does not rebuild them.
+	derived *derived
+}
+
+// derived is the data computed from a snapshot's indexed files.
+type derived struct {
+	files      []*fileEntry
+	searchOnce sync.Once
+	search     *searchIndex
+	graphOnce  sync.Once
+	graph      *refGraph
+}
+
+// searchIndex returns the snapshot's search index, building it on first
+// use.
+func (s *snapshot) searchIndex() *searchIndex {
+	d := s.derived
+	d.searchOnce.Do(func() { d.search = buildSearchIndex(d.files) })
+	return d.search
+}
+
+// prepareSearch builds the search index in the background, so a query
+// soon after startup does not wait for it.
+func (s *snapshot) prepareSearch() {
+	go s.searchIndex()
 }
 
 // Open prepares an index rooted at opts.Root. It loads the on-disk cache
@@ -190,6 +214,7 @@ func (ix *Index) Close() error {
 func (ix *Index) Stats() Stats {
 	if s := ix.snap.Load(); s != nil {
 		st := s.stats
+		st.Terms = len(s.searchIndex().postings)
 		st.Skipped = copyCounts(st.Skipped)
 		st.Languages = copyCounts(st.Languages)
 		return st
@@ -262,8 +287,9 @@ func (ix *Index) EnsureFresh(ctx context.Context) error {
 	ix.mu.Unlock()
 	switch {
 	case stale:
-		_, err := ix.Refresh(ctx)
-		return err
+		ix.refreshMu.Lock()
+		defer ix.refreshMu.Unlock()
+		return ix.refreshLocked(ctx)
 	case pending:
 		return ix.refreshPending(ctx)
 	}
@@ -276,13 +302,20 @@ func (ix *Index) EnsureFresh(ctx context.Context) error {
 func (ix *Index) Refresh(ctx context.Context) (Stats, error) {
 	ix.refreshMu.Lock()
 	defer ix.refreshMu.Unlock()
-	return ix.refreshLocked(ctx)
+	if err := ix.refreshLocked(ctx); err != nil {
+		if errors.Is(err, ErrClosed) {
+			return Stats{}, err
+		}
+		return ix.Stats(), err
+	}
+	return ix.Stats(), nil
 }
 
-// refreshLocked is Refresh with refreshMu held.
-func (ix *Index) refreshLocked(ctx context.Context) (Stats, error) {
+// refreshLocked is Refresh with refreshMu held. It does not compute the
+// statistics, which would force the search index to be built.
+func (ix *Index) refreshLocked(ctx context.Context) error {
 	if ix.isClosed() {
-		return Stats{}, ErrClosed
+		return ErrClosed
 	}
 	start := time.Now()
 	ix.mu.Lock()
@@ -300,7 +333,7 @@ func (ix *Index) refreshLocked(ctx context.Context) (Stats, error) {
 	wr, err := ix.walk(ctx)
 	if err != nil {
 		restore()
-		return ix.Stats(), err
+		return err
 	}
 	old := ix.snap.Load()
 	var oldAll map[string]*fileEntry
@@ -321,7 +354,7 @@ func (ix *Index) refreshLocked(ctx context.Context) (Stats, error) {
 	parsed, err := ix.parseFiles(ctx, toParse, start)
 	if err != nil {
 		restore()
-		return ix.Stats(), err
+		return err
 	}
 	for _, e := range parsed {
 		all[e.Path] = e
@@ -332,7 +365,14 @@ func (ix *Index) refreshLocked(ctx context.Context) (Stats, error) {
 			removed++
 		}
 	}
-	snap := buildSnapshot(ix.root, all, wr.skipped, wr.truncated)
+	var same *snapshot
+	if len(parsed) == 0 && removed == 0 && old != nil {
+		same = old // every entry was reused: the same files
+	}
+	snap := buildSnapshot(ix.root, all, wr.skipped, wr.truncated, same)
+	if same == nil {
+		snap.prepareSearch()
+	}
 	snap.stats.Parsed = len(parsed)
 	snap.stats.Reused = reused
 	snap.stats.Removed = removed
@@ -347,7 +387,7 @@ func (ix *Index) refreshLocked(ctx context.Context) (Stats, error) {
 			ix.logf("codeintel: saving cache: %v", err)
 		}
 	}
-	return ix.Stats(), nil
+	return nil
 }
 
 // refreshPending re-reads only the invalidated files.
@@ -368,8 +408,7 @@ func (ix *Index) refreshPending(ctx context.Context) error {
 			ix.pending[k] = true
 		}
 		ix.mu.Unlock()
-		_, err := ix.refreshLocked(ctx)
-		return err
+		return ix.refreshLocked(ctx)
 	}
 	start := time.Now()
 	all := make(map[string]*fileEntry, len(old.all)+len(taken))
@@ -404,7 +443,7 @@ func (ix *Index) refreshPending(ctx context.Context) error {
 	for _, e := range parsed {
 		all[e.Path] = e
 	}
-	snap := buildSnapshot(ix.root, all, old.walkSkipped, old.stats.Truncated)
+	snap := buildSnapshot(ix.root, all, old.walkSkipped, old.stats.Truncated, nil)
 	snap.stats.Parsed = len(parsed)
 	snap.stats.Reused = len(all) - len(parsed)
 	snap.stats.Removed = removed
@@ -500,8 +539,10 @@ func readCapped(abs string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// buildSnapshot assembles an immutable snapshot from file entries.
-func buildSnapshot(root string, all map[string]*fileEntry, skipped map[string]int, truncated bool) *snapshot {
+// buildSnapshot assembles an immutable snapshot from file entries. same,
+// when not nil, is a snapshot with exactly the same entries, whose derived
+// data is shared instead of rebuilt.
+func buildSnapshot(root string, all map[string]*fileEntry, skipped map[string]int, truncated bool, same *snapshot) *snapshot {
 	s := &snapshot{all: all, walkSkipped: skipped}
 	stats := Stats{Root: root, Skipped: copyCounts(skipped), Languages: map[string]int{}, Truncated: truncated}
 	if stats.Skipped == nil {
@@ -512,7 +553,9 @@ func buildSnapshot(root string, all map[string]*fileEntry, skipped map[string]in
 			stats.Skipped[e.Skip]++
 			continue
 		}
-		s.files = append(s.files, e)
+		if same == nil {
+			s.files = append(s.files, e)
+		}
 		stats.Languages[e.Lang]++
 		stats.Symbols += len(e.Symbols)
 		stats.Chunks += len(e.Chunks)
@@ -522,10 +565,13 @@ func buildSnapshot(root string, all map[string]*fileEntry, skipped map[string]in
 			delete(stats.Skipped, k)
 		}
 	}
-	sort.Slice(s.files, func(i, j int) bool { return s.files[i].Path < s.files[j].Path })
+	if same != nil {
+		s.files, s.derived = same.files, same.derived
+	} else {
+		sort.Slice(s.files, func(i, j int) bool { return s.files[i].Path < s.files[j].Path })
+		s.derived = &derived{files: s.files}
+	}
 	stats.Files = len(s.files)
-	s.search = buildSearchIndex(s.files)
-	stats.Terms = len(s.search.postings)
 	s.stats = stats
 	return s
 }

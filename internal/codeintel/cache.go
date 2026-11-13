@@ -2,10 +2,8 @@ package codeintel
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/gob"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,8 +14,9 @@ import (
 	"time"
 )
 
-// The cache file is a fixed header followed by a gzip-compressed gob
-// payload:
+// The cache file is a fixed header followed by a payload in the binary
+// format of cachecodec.go (uncompressed: its string table already removes
+// most redundancy, and it loads much faster without inflating):
 //
 //	magic[8] | version uint32 | payload length uint64 | sha256(payload)[32] | payload
 //
@@ -25,7 +24,7 @@ import (
 // discards the cache and the index is rebuilt from source.
 const (
 	cacheMagic   = "GTACIDX\x00"
-	cacheVersion = 3
+	cacheVersion = 4
 	// analysisVersion changes whenever extraction or chunking changes, so
 	// old entries are never reused with new semantics.
 	analysisVersion = "2026.11.3"
@@ -68,29 +67,18 @@ func (ix *Index) saveCache(s *snapshot) error {
 	for _, e := range s.all {
 		files = append(files, e)
 	}
-	var payload bytes.Buffer
-	zw, err := gzip.NewWriterLevel(&payload, gzip.BestSpeed)
-	if err != nil {
-		return err
-	}
-	err = gob.NewEncoder(zw).Encode(cachePayload{
+	payload := encodeCache(&cachePayload{
 		Root: ix.root, Key: ix.cacheKey(), SavedAt: time.Now().UnixNano(),
 		Files: files, Skipped: s.walkSkipped, Truncate: s.stats.Truncated,
 	})
-	if cerr := zw.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("encode: %w", err)
-	}
-	if payload.Len() > maxCacheSize {
-		return fmt.Errorf("index too large to cache (%d bytes)", payload.Len())
+	if len(payload) > maxCacheSize {
+		return fmt.Errorf("index too large to cache (%d bytes)", len(payload))
 	}
 	header := make([]byte, 0, cacheHeaderSize)
 	header = append(header, cacheMagic...)
 	header = binary.BigEndian.AppendUint32(header, cacheVersion)
-	header = binary.BigEndian.AppendUint64(header, uint64(payload.Len()))
-	sum := sha256.Sum256(payload.Bytes())
+	header = binary.BigEndian.AppendUint64(header, uint64(len(payload)))
+	sum := sha256.Sum256(payload)
 	header = append(header, sum[:]...)
 
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -110,7 +98,7 @@ func (ix *Index) saveCache(s *snapshot) error {
 	if _, err := tmp.Write(header); err != nil {
 		return err
 	}
-	if _, err := tmp.Write(payload.Bytes()); err != nil {
+	if _, err := tmp.Write(payload); err != nil {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
@@ -169,13 +157,8 @@ func (ix *Index) readCache() (*cachePayload, error) {
 	if !bytes.Equal(sum[:], header[20:]) {
 		return nil, fmt.Errorf("checksum mismatch")
 	}
-	zr, err := gzip.NewReader(bytes.NewReader(payload))
+	cp, err := decodeCache(payload, ix.intern.intern)
 	if err != nil {
-		return nil, err
-	}
-	defer zr.Close()
-	var cp cachePayload
-	if err := gob.NewDecoder(io.LimitReader(zr, 8*maxCacheSize)).Decode(&cp); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	if cp.Root != ix.root || cp.Key != ix.cacheKey() {
@@ -191,7 +174,7 @@ func (ix *Index) readCache() (*cachePayload, error) {
 		}
 		seen[e.Path] = true
 	}
-	return &cp, nil
+	return cp, nil
 }
 
 // loadCache seeds the index from disk. The loaded snapshot is served
@@ -211,10 +194,10 @@ func (ix *Index) loadCache() {
 		if ix.excluded(e.Path, false) {
 			continue
 		}
-		ix.intern.internEntry(e)
-		all[e.Path] = e
+		all[e.Path] = e // terms were interned while decoding
 	}
-	snap := buildSnapshot(ix.root, all, cp.Skipped, cp.Truncate)
+	snap := buildSnapshot(ix.root, all, cp.Skipped, cp.Truncate, nil)
+	snap.prepareSearch()
 	snap.stats.FromCache = true
 	snap.stats.Reused = len(all)
 	snap.stats.LastRefresh = time.Unix(0, cp.SavedAt)
