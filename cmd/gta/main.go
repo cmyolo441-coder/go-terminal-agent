@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/term"
@@ -187,7 +188,12 @@ func run(args []string) error {
 	if cpErr != nil {
 		fmt.Fprintln(os.Stderr, "gta: checkpoints disabled:", cpErr)
 	}
-	registerCommands(root, cfg, cp, hookRunner, policy)
+	var uiStarted atomic.Bool
+	mcpManager := startMCP(ag, cfg, root, &uiStarted)
+	if mcpManager != nil {
+		defer mcpManager.Close()
+	}
+	registerCommands(root, cfg, cp, hookRunner, policy, mcpManager)
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}
@@ -217,6 +223,7 @@ func run(args []string) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stdin.Fd())) {
 		return errors.New("interactive mode needs a terminal; use -p for scripts and pipes")
 	}
+	uiStarted.Store(true)
 	err = ui.Run(ui.Options{
 		Agent:         ag,
 		Session:       sess,

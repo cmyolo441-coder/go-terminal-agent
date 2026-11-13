@@ -162,6 +162,22 @@ func (a *Agent) AddUsage(model string, u llm.Usage) {
 	}
 }
 
+// Registry returns the current tool registry.
+func (a *Agent) Registry() *tools.Registry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Tools
+}
+
+// SetRegistry swaps the tool registry, for example when an MCP server's
+// tools change. It is safe to call while a turn runs; the change applies to
+// the next model call.
+func (a *Agent) SetRegistry(r *tools.Registry) {
+	a.mu.Lock()
+	a.Tools = r
+	a.mu.Unlock()
+}
+
 // ActiveSink returns the sink of the turn in progress, or nil when idle.
 // Tools that need to reach the user mid-turn, like sub-agents asking for
 // approval, go through it.
@@ -215,7 +231,7 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 			Model:        s.Model,
 			System:       a.System,
 			Messages:     a.History(),
-			Tools:        a.Tools.Specs(),
+			Tools:        a.Registry().Specs(),
 			MaxTokens:    s.MaxTokens,
 			Effort:       s.Effort,
 			ShowThinking: s.ShowThinking,
@@ -305,6 +321,7 @@ type prepared struct {
 // runTools executes tool calls and returns their results in call order.
 // stop is true when the user declined an action and the turn should end.
 func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]llm.Block, bool) {
+	reg := a.Registry()
 	items := make([]*prepared, len(uses))
 	for i, u := range uses {
 		p := &prepared{use: u}
@@ -314,7 +331,7 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]ll
 			p.result = errorResult(u.ToolUseID, reason)
 			p.done = true
 		}
-		tool, ok := a.Tools.Get(u.ToolName)
+		tool, ok := reg.Get(u.ToolName)
 		if !ok {
 			fail(fmt.Sprintf("unknown tool %q", u.ToolName))
 			continue

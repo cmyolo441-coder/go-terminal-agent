@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/agent"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
@@ -13,6 +15,7 @@ import (
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/anthropic"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/prompt"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/sandbox"
@@ -162,3 +165,53 @@ func authHint() string {
 	}
 	return "No ANTHROPIC_API_KEY found. Export one, or run `ant auth login`, before sending a prompt."
 }
+
+// startMCP connects the configured MCP servers and adds their tools to ag,
+// rebuilding the registry whenever a server's tool list changes. Startup
+// waits at most mcpStartTimeout; slower servers keep connecting and their
+// tools appear when ready.
+func startMCP(ag *agent.Agent, cfg config.Config, root string, uiStarted *atomic.Bool) *mcp.Manager {
+	if len(cfg.MCPServers) == 0 {
+		return nil
+	}
+	base := ag.Registry()
+	builtins := make([]tools.Tool, 0, len(base.Names()))
+	for _, name := range base.Names() {
+		t, _ := base.Get(name)
+		builtins = append(builtins, t)
+	}
+	var m *mcp.Manager
+	rebuild := func() {
+		ag.SetRegistry(tools.NewRegistry(append(append([]tools.Tool{}, builtins...), m.Tools()...)...))
+	}
+	m = mcp.NewManager(mcp.Options{
+		Dir: root,
+		Logf: func(format string, args ...any) {
+			msg := fmt.Sprintf(format, args...)
+			if !uiStarted.Load() {
+				fmt.Fprintln(os.Stderr, "gta: mcp:", msg)
+			} else if s := ag.ActiveSink(); s != nil {
+				s.Notice("MCP: " + msg)
+			}
+		},
+		OnChange: func() {
+			if m != nil {
+				rebuild()
+			}
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), mcpStartTimeout)
+	defer cancel()
+	if err := m.Start(ctx, cfg.MCPServers); err != nil {
+		fmt.Fprintln(os.Stderr, "gta: mcp:", err)
+	}
+	rebuild()
+	for _, st := range m.Status() {
+		if st.State == mcp.StateFailed {
+			fmt.Fprintf(os.Stderr, "gta: mcp server %s failed: %v (see /mcp)\n", st.Name, st.Err)
+		}
+	}
+	return m
+}
+
+const mcpStartTimeout = 30 * time.Second

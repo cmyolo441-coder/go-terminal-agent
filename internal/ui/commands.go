@@ -426,7 +426,7 @@ func cmdMemory(m *model, _ string) tea.Cmd {
 func cmdTools(m *model, _ string) tea.Cmd {
 	var b strings.Builder
 	b.WriteString(renderInfo("Tools"))
-	for _, spec := range m.ag.Tools.Specs() {
+	for _, spec := range m.ag.Registry().Specs() {
 		desc := spec.Description
 		if i := strings.Index(desc, ". "); i > 0 {
 			desc = desc[:i+1]

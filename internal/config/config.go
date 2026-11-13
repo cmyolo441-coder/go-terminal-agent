@@ -13,6 +13,7 @@ import (
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/sandbox"
 )
 
@@ -54,6 +55,10 @@ type Config struct {
 	// cloned repository should not be able to run commands on its own.
 	Hooks             hooks.Config `json:"hooks,omitempty"`
 	TrustProjectHooks bool         `json:"trust_project_hooks"`
+
+	// MCPServers are Model Context Protocol servers whose tools GTA can
+	// use. Like hooks, servers from a project file need trust_project_hooks.
+	MCPServers mcp.Config `json:"mcp_servers,omitempty"`
 
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
@@ -119,7 +124,9 @@ func Load(root string) (Config, error) {
 		return cfg, err
 	}
 	userHooks, trust := cfg.Hooks, cfg.TrustProjectHooks
+	userMCP := cfg.MCPServers
 	cfg.Hooks = nil
+	cfg.MCPServers = nil
 	if err := mergeFile(&cfg, ProjectFile(root)); err != nil {
 		return cfg, err
 	}
@@ -135,7 +142,17 @@ func Load(root string) (Config, error) {
 			cfg.Hooks[ev] = append(cfg.Hooks[ev], hs...)
 		}
 	}
-	cfg.IgnoredProjectHooks = !trust && projectHooks.Count() > 0
+	projectMCP := cfg.MCPServers
+	cfg.MCPServers = mcp.Config{}
+	for name, sc := range userMCP {
+		cfg.MCPServers[name] = sc
+	}
+	if trust {
+		for name, sc := range projectMCP {
+			cfg.MCPServers[name] = sc
+		}
+	}
+	cfg.IgnoredProjectHooks = !trust && (projectHooks.Count() > 0 || len(projectMCP) > 0)
 	applyEnv(&cfg)
 	return cfg, cfg.Validate()
 }
@@ -207,6 +224,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.Hooks.Validate(); err != nil {
 		return fmt.Errorf("config: hooks: %w", err)
+	}
+	if err := c.MCPServers.Validate(); err != nil {
+		return fmt.Errorf("config: mcp_servers: %w", err)
 	}
 	if !ValidProvider(c.Provider) {
 		return fmt.Errorf("config: provider %q is not one of %s", c.Provider, strings.Join(Providers(), ", "))

@@ -14,6 +14,7 @@ import (
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/gitx"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/sandbox"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/ui"
@@ -49,7 +50,7 @@ func setupCheckpoints(ag *agent.Agent, sessionID string) (*checkpoint.Store, err
 
 // registerCommands adds the git, checkpoint, sandbox, hooks and provider
 // slash commands to the interactive UI.
-func registerCommands(root string, cfg config.Config, cp *checkpoint.Store, hk *hooks.Runner, policy *sandbox.Policy) {
+func registerCommands(root string, cfg config.Config, cp *checkpoint.Store, hk *hooks.Runner, policy *sandbox.Policy, mm *mcp.Manager) {
 	ui.Register(
 		ui.Extra{Name: "diff", Args: "[--staged] [paths]", Help: "Show uncommitted changes (git)", Run: func(ctx context.Context, arg string) (string, error) {
 			return cmdDiff(ctx, root, arg)
@@ -129,6 +130,17 @@ func registerCommands(root string, cfg config.Config, cp *checkpoint.Store, hk *
 				}
 			}
 			return b.String(), nil
+		}},
+		ui.Extra{Name: "mcp", Args: "[reconnect <name>]", Help: "Show MCP servers or reconnect one", Run: func(ctx context.Context, arg string) (string, error) {
+			if mm == nil {
+				return "No MCP servers configured. Add an `mcp_servers` block to your user config, e.g. `{\"mcp_servers\": {\"fs\": {\"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"]}}}`.", nil
+			}
+			if f := strings.Fields(arg); len(f) == 2 && f[0] == "reconnect" {
+				if err := mm.Reconnect(ctx, f[1]); err != nil {
+					return "", err
+				}
+			}
+			return "```\n" + strings.TrimRight(mcp.FormatStatus(mm.Status()), "\n") + "\n```", nil
 		}},
 		ui.Extra{Name: "provider", Help: "Show the model provider and its known models", Run: func(context.Context, string) (string, error) {
 			if isAnthropic(cfg) {
