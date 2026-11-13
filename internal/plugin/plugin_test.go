@@ -339,14 +339,15 @@ func TestCommands(t *testing.T) {
 
 func TestSplitWords(t *testing.T) {
 	cases := map[string][]string{
-		``:                      nil,
-		`a  b`:                  {"a", "b"},
-		`'it''s'`:               {"its"},
-		`"a \"q\" \\ b" c`:      {`a "q" \ b`, "c"},
-		`x\ y`:                  {"x y"},
-		`''`:                    {""},
-		"tab\tsep\nline":        {"tab", "sep", "line"},
-		`"$HOME" '$(rm -rf /)'`: {"$HOME", "$(rm -rf /)"},
+		``:                         nil,
+		`a  b`:                     {"a", "b"},
+		`'it''s'`:                  {"its"},
+		`"a \"q\" \\ b" c`:         {`a "q" \ b`, "c"},
+		`x\ y`:                     {"x y"},
+		`''`:                       {""},
+		"tab\tsep\nline":           {"tab", "sep", "line"},
+		`"$HOME" '$(rm -rf /)'`:    {"$HOME", "$(rm -rf /)"},
+		"\xff\xfe é\\\xe2\x82\xac": {"\xff\xfe", "é\xe2\x82\xac"},
 	}
 	for in, want := range cases {
 		got, err := splitWords(in)

@@ -320,10 +320,13 @@ func (a *accumulator) result(provider, requestModel string) (*llm.Response, erro
 // toolInput turns streamed arguments into tool input. Empty arguments mean
 // no parameters; arguments cut short (for example at max_tokens) cannot be
 // trusted and become an empty object, which the tool's own validation
-// rejects with a clear message.
+// rejects with a clear message. Arguments that are valid JSON but not an
+// object (an array, a string, null) become an empty object too: tool input
+// must be an object, and Anthropic rejects any other replayed tool_use
+// input, which would break every later turn (and every fallback to it).
 func toolInput(args string) json.RawMessage {
 	args = strings.TrimSpace(args)
-	if args == "" || !json.Valid([]byte(args)) {
+	if args == "" || args[0] != '{' || !json.Valid([]byte(args)) {
 		return json.RawMessage("{}")
 	}
 	var buf bytes.Buffer
@@ -476,6 +479,49 @@ func (p *Provider) streamError(c *chunk, model string) error {
 	return e
 }
 
+// maxEventBytes bounds one SSE event (and one line), so a misbehaving
+// server cannot make the client buffer without limit. It matches the cap
+// on a non-streamed reply.
+const maxEventBytes = 64 << 20
+
+var errEventTooLarge = fmt.Errorf("the server sent a stream event larger than %d MiB", maxEventBytes>>20)
+
+// readSSELine reads one line, failing with errEventTooLarge rather than
+// buffering a line longer than maxEventBytes. touch is called whenever
+// bytes arrive, so a long line arriving slowly does not trip the idle
+// timer.
+func readSSELine(br *bufio.Reader, touch func()) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if len(chunk) > 0 {
+			touch()
+		}
+		if len(line)+len(chunk) > maxEventBytes {
+			return nil, errEventTooLarge
+		}
+		line = append(line, chunk...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return line, err
+	}
+}
+
+// endsLikeJSON reports whether b ends with the last byte of a JSON object,
+// array, string or literal.
+func endsLikeJSON(b []byte) bool {
+	b = bytes.TrimRight(b, " \t")
+	if len(b) == 0 {
+		return false
+	}
+	switch c := b[len(b)-1]; {
+	case c == '}' || c == ']' || c == '"' || c == 'e' || c == 'l' || (c >= '0' && c <= '9'):
+		return true
+	}
+	return false
+}
+
 // readSSE parses a Server-Sent Events stream, calling handle with each
 // event's data until handle reports done, the body ends or reading fails.
 // Comment lines (keep-alives such as ": OPENROUTER PROCESSING") and fields
@@ -494,9 +540,11 @@ func readSSE(r io.Reader, touch func(), handle func(data []byte) (bool, error)) 
 		return handle(data)
 	}
 	for {
-		line, rerr := br.ReadBytes('\n')
+		line, rerr := readSSELine(br, touch)
+		if errors.Is(rerr, errEventTooLarge) {
+			return rerr
+		}
 		if len(line) > 0 {
-			touch()
 			line = bytes.TrimRight(line, "\r\n")
 			switch {
 			case len(line) == 0:
@@ -508,15 +556,22 @@ func readSSE(r io.Reader, touch func(), handle func(data []byte) (bool, error)) 
 				field, value, _ := bytes.Cut(line, []byte(":"))
 				value = bytes.TrimPrefix(value, []byte(" "))
 				if string(field) != "data" {
-					continue
+					// Not continue: a read error that came with this line
+					// must still be handled below.
+					break
 				}
 				// Tolerate servers that omit the blank line between events:
 				// a complete JSON payload followed by another data line is
-				// two events, not one multi-line event.
-				if hasData && json.Valid(buf.Bytes()) {
+				// two events, not one multi-line event. Only a buffer that
+				// ends like a JSON value is checked, so a large event sent
+				// as many data lines is not rescanned on every line.
+				if hasData && endsLikeJSON(buf.Bytes()) && json.Valid(buf.Bytes()) {
 					if stop, err := dispatch(); stop || err != nil {
 						return err
 					}
+				}
+				if buf.Len()+len(value)+1 > maxEventBytes {
+					return errEventTooLarge
 				}
 				if hasData {
 					buf.WriteByte('\n')

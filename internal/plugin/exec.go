@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // program is a resolved executable.
@@ -284,7 +285,10 @@ func expandAll(r *strings.Replacer, in []string) []string {
 
 // splitWords splits a string into shell-style words: whitespace separates
 // words, single quotes keep text literally, double quotes allow \" and \\,
-// and a backslash outside quotes escapes the next character.
+// and a backslash outside quotes escapes the next character. It works on
+// bytes (every special character is ASCII), so an argument that is not
+// valid UTF-8 reaches the program unchanged instead of being rewritten to
+// U+FFFD, and an escaped multi-byte character is kept whole.
 func splitWords(s string) ([]string, error) {
 	var words []string
 	var cur strings.Builder
@@ -295,44 +299,49 @@ func splitWords(s string) ([]string, error) {
 		double
 	)
 	quote := none
-	rs := []rune(s)
-	for i := 0; i < len(rs); i++ {
-		r := rs[i]
+	// escaped returns the length of the character after a backslash at i.
+	escaped := func(i int) int {
+		_, n := utf8.DecodeRuneInString(s[i+1:])
+		return n
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		switch quote {
 		case single:
-			if r == '\'' {
+			if c == '\'' {
 				quote = none
 			} else {
-				cur.WriteRune(r)
+				cur.WriteByte(c)
 			}
 		case double:
 			switch {
-			case r == '"':
+			case c == '"':
 				quote = none
-			case r == '\\' && i+1 < len(rs) && (rs[i+1] == '"' || rs[i+1] == '\\'):
+			case c == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\'):
 				i++
-				cur.WriteRune(rs[i])
+				cur.WriteByte(s[i])
 			default:
-				cur.WriteRune(r)
+				cur.WriteByte(c)
 			}
 		default:
 			switch {
-			case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 				if inWord {
 					words = append(words, cur.String())
 					cur.Reset()
 					inWord = false
 				}
-			case r == '\'':
+			case c == '\'':
 				quote, inWord = single, true
-			case r == '"':
+			case c == '"':
 				quote, inWord = double, true
-			case r == '\\' && i+1 < len(rs):
-				i++
-				cur.WriteRune(rs[i])
+			case c == '\\' && i+1 < len(s):
+				n := escaped(i)
+				cur.WriteString(s[i+1 : i+1+n])
+				i += n
 				inWord = true
 			default:
-				cur.WriteRune(r)
+				cur.WriteByte(c)
 				inWord = true
 			}
 		}
