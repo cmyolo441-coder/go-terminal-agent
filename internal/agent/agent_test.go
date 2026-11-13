@@ -54,11 +54,15 @@ type sink struct {
 	notices  []string
 }
 
-func (s *sink) Stream(llm.Event)                  {}
-func (s *sink) ToolStart(string, *tools.Call)     {}
-func (s *sink) Usage(string, llm.Usage)           {}
-func (s *sink) Notice(m string)                   { s.notices = append(s.notices, m) }
-func (s *sink) ToolFailed(_, name, reason string) { s.mu.Lock(); s.failed = append(s.failed, name+": "+reason); s.mu.Unlock() }
+func (s *sink) Stream(llm.Event)              {}
+func (s *sink) ToolStart(string, *tools.Call) {}
+func (s *sink) Usage(string, llm.Usage)       {}
+func (s *sink) Notice(m string)               { s.notices = append(s.notices, m) }
+func (s *sink) ToolFailed(_, name, reason string) {
+	s.mu.Lock()
+	s.failed = append(s.failed, name+": "+reason)
+	s.mu.Unlock()
+}
 func (s *sink) ToolDone(_ string, c *tools.Call, out string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -146,6 +146,9 @@ func (e *Env) Inside(abs string) bool {
 	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator))
 }
 
+// MarkRead records that the user or model has seen a file's current content.
+func (e *Env) MarkRead(abs string) { e.markRead(abs) }
+
 func (e *Env) markRead(abs string) {
 	if st, err := os.Stat(abs); err == nil {
 		e.mu.Lock()
@@ -264,4 +267,10 @@ func isBinary(b []byte) bool {
 		n = 8000
 	}
 	return bytes.IndexByte(b[:n], 0) >= 0
+}
+
+// NewCall builds a runnable call. Tools outside this package (MCP, sub-agents)
+// use it to plug into the agent loop and the permission gate.
+func NewCall(tool string, kind Kind, summary, preview, command string, run func(ctx context.Context) (string, error)) *Call {
+	return &Call{Tool: tool, Kind: kind, Summary: summary, Preview: preview, Command: command, run: run}
 }

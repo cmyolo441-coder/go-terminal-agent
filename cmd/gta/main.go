@@ -1,0 +1,251 @@
+// Command gta is a terminal coding agent powered by Claude.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"golang.org/x/term"
+
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/agent"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/anthropic"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/prompt"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/session"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/ui"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/version"
+)
+
+const usage = `gta: a terminal coding agent powered by Claude
+
+Usage:
+  gta [flags] [prompt]           start the interactive agent (optionally with a first prompt)
+  gta -p "prompt" [flags]        run one prompt non-interactively and print the answer
+  echo "prompt" | gta -p         read the prompt from stdin
+
+Flags:
+`
+
+type flags struct {
+	print      bool
+	jsonOut    bool
+	model      string
+	effort     string
+	mode       string
+	yolo       bool
+	resume     string
+	cont       bool
+	cwd        string
+	web        bool
+	maxTurns   int
+	showVer    bool
+	noThinking bool
+}
+
+func parseFlags(args []string) (flags, []string, error) {
+	var f flags
+	fs := flag.NewFlagSet("gta", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), usage)
+		fs.PrintDefaults()
+	}
+	fs.BoolVar(&f.print, "p", false, "print mode: run the prompt non-interactively and exit")
+	fs.BoolVar(&f.print, "print", false, "same as -p")
+	fs.BoolVar(&f.jsonOut, "json", false, "with -p, print a JSON result (text, usage, cost, tool calls)")
+	fs.StringVar(&f.model, "model", "", "model id (default from config, claude-opus-5-5)")
+	fs.StringVar(&f.effort, "effort", "", "reasoning effort: low, medium, high, xhigh, max")
+	fs.StringVar(&f.mode, "mode", "", "permission mode: ask, auto-edit, plan, yolo")
+	fs.BoolVar(&f.yolo, "yolo", false, "same as --mode yolo")
+	fs.StringVar(&f.resume, "resume", "", "resume a saved session by id or id prefix")
+	fs.BoolVar(&f.cont, "c", false, "continue the most recent session in this workspace")
+	fs.BoolVar(&f.cont, "continue", false, "same as -c")
+	fs.StringVar(&f.cwd, "cwd", "", "workspace root (default: current directory)")
+	fs.BoolVar(&f.web, "web", false, "enable server-side web search and web fetch")
+	fs.IntVar(&f.maxTurns, "max-turns", 0, "maximum model calls per prompt")
+	fs.BoolVar(&f.noThinking, "no-thinking", false, "hide reasoning summaries")
+	fs.BoolVar(&f.showVer, "version", false, "print the version and exit")
+	if err := fs.Parse(args); err != nil {
+		return f, nil, err
+	}
+	return f, fs.Args(), nil
+}
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "gta:", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	f, rest, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+	if f.showVer {
+		fmt.Printf("gta %s (%s, %s)\n", version.Version, version.Commit, version.Date)
+		return nil
+	}
+	root := f.cwd
+	if root == "" {
+		if root, err = os.Getwd(); err != nil {
+			return err
+		}
+	}
+	if root, err = filepath.Abs(root); err != nil {
+		return err
+	}
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return fmt.Errorf("workspace %s is not a directory", root)
+	}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	applyFlags(&cfg, f)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	mode, err := permission.ParseMode(cfg.PermissionMode)
+	if err != nil {
+		return err
+	}
+
+	env, err := tools.NewEnv(root)
+	if err != nil {
+		return err
+	}
+	if cfg.ShellTimeout > 0 {
+		env.ShellTimeout = secondsDuration(cfg.ShellTimeout)
+	}
+	provider := anthropic.New(anthropic.Options{
+		BaseURL:    cfg.BaseURL,
+		WebSearch:  cfg.WebSearch,
+		WebFetch:   cfg.WebFetch,
+		Compaction: cfg.Compaction,
+		Fallbacks:  cfg.Fallbacks,
+	})
+	ag := agent.New(provider, tools.Default(), env, permission.NewGate(mode, cfg.AllowCommands), prompt.Build(root), agent.Settings{
+		Model:        cfg.Model,
+		Effort:       cfg.Effort,
+		MaxTokens:    cfg.MaxTokens,
+		ShowThinking: cfg.ShowThinking,
+		MaxTurns:     cfg.MaxTurns,
+	})
+
+	store := session.DefaultStore()
+	sess := session.New(root, cfg.Model)
+	switch {
+	case f.resume != "":
+		if sess, err = store.Load(f.resume); err != nil {
+			return err
+		}
+	case f.cont:
+		if sess, err = store.Latest(root); err != nil {
+			return err
+		}
+	}
+	if len(sess.Messages) > 0 {
+		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
+	}
+
+	promptText := strings.TrimSpace(strings.Join(rest, " "))
+	if f.print {
+		if promptText == "" && !term.IsTerminal(int(os.Stdin.Fd())) {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			promptText = strings.TrimSpace(string(data))
+		}
+		if promptText == "" {
+			return errors.New("-p needs a prompt (as an argument or on stdin)")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		runErr := ui.RunHeadless(ctx, ag, promptText, sess.ID, f.jsonOut, os.Stdout, os.Stderr)
+		saveSession(store, sess, ag)
+		if errors.Is(runErr, agent.ErrInterrupted) {
+			return errors.New("interrupted")
+		}
+		return runErr
+	}
+
+	if !term.IsTerminal(int(os.Stdout.Fd())) || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("interactive mode needs a terminal; use -p for scripts and pipes")
+	}
+	err = ui.Run(ui.Options{
+		Agent:         ag,
+		Session:       sess,
+		Store:         store,
+		Config:        cfg,
+		Root:          root,
+		Version:       version.Version,
+		InitialPrompt: promptText,
+		AuthHint:      authHint(),
+	})
+	if len(ag.History()) > 0 {
+		fmt.Printf("\nSession saved. Resume with: gta --resume %s\n", sess.ID)
+	}
+	return err
+}
+
+func applyFlags(cfg *config.Config, f flags) {
+	if f.model != "" {
+		cfg.Model = f.model
+	}
+	if f.effort != "" {
+		cfg.Effort = f.effort
+	}
+	if f.mode != "" {
+		cfg.PermissionMode = f.mode
+	}
+	if f.yolo {
+		cfg.PermissionMode = string(permission.ModeYolo)
+	}
+	if f.web {
+		cfg.WebSearch, cfg.WebFetch = true, true
+	}
+	if f.maxTurns > 0 {
+		cfg.MaxTurns = f.maxTurns
+	}
+	if f.noThinking {
+		cfg.ShowThinking = false
+	}
+}
+
+func saveSession(store *session.Store, sess *session.Session, ag *agent.Agent) {
+	sess.Messages = ag.History()
+	sess.Usage, sess.CostUSD, _ = ag.Stats()
+	sess.Model = ag.Settings().Model
+	if err := store.Save(sess); err != nil {
+		fmt.Fprintln(os.Stderr, "gta: could not save session:", err)
+	}
+}
+
+// authHint explains how to authenticate when no credentials are visible.
+// The SDK also reads `ant auth login` profiles, so this is only a hint.
+func authHint() string {
+	if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat(filepath.Join(home, ".config", "anthropic")); err == nil {
+		return ""
+	}
+	return "No ANTHROPIC_API_KEY found. Export one, or run `ant auth login`, before sending a prompt."
+}

@@ -341,3 +341,19 @@ func prettyPath(p string) string {
 	}
 	return p
 }
+
+// clipMiddle shortens s to at most max display cells by replacing its middle
+// with an ellipsis, keeping the start and the more telling end of a path.
+func clipMiddle(s string, max int) string {
+	if max < 8 || runewidth.StringWidth(s) <= max {
+		return s
+	}
+	rs := []rune(s)
+	keep := max - 1
+	head := keep / 3
+	tail := keep - head
+	for runewidth.StringWidth(string(rs[:head]))+1+runewidth.StringWidth(string(rs[len(rs)-tail:])) > max && tail > 1 {
+		tail--
+	}
+	return string(rs[:head]) + "…" + string(rs[len(rs)-tail:])
+}

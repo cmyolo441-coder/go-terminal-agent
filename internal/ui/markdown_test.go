@@ -31,3 +31,20 @@ func TestRenderMarkdown(t *testing.T) {
 	}
 }
 
+func TestRenderExpandsTabs(t *testing.T) {
+	out := stripANSI(newMD("dark").render("```go\nfunc f() {\n\treturn\n}\n```\n", 80))
+	if strings.Contains(out, "\t") {
+		t.Fatalf("tab survived rendering: %q", out)
+	}
+}
+
+func TestClipMiddle(t *testing.T) {
+	s := "/tmp/a-very-long-directory-name/with/many/segments/work"
+	got := clipMiddle(s, 30)
+	if w := len([]rune(got)); w > 30 || !strings.HasSuffix(got, "segments/work") || !strings.HasPrefix(got, "/tmp") {
+		t.Fatalf("clipMiddle = %q (%d)", got, w)
+	}
+	if clipMiddle("short", 30) != "short" {
+		t.Fatal("short string changed")
+	}
+}

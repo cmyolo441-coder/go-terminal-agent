@@ -17,6 +17,9 @@ type mdRenderer struct {
 func newMD(style string) *mdRenderer { return &mdRenderer{style: style} }
 
 func (m *mdRenderer) render(src string, width int) string {
+	// Raw tabs make terminals jump to the next tab stop, which breaks code
+	// block backgrounds and alignment; render them as four spaces.
+	src = strings.ReplaceAll(src, "\t", "    ")
 	if width < 20 {
 		width = 20
 	}
