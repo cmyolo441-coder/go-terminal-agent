@@ -163,7 +163,9 @@ next prompt.
 | `/model [id]`, `/effort [level]`, `/mode [mode]`, `/thinking` | settings |
 | `/clear`, `/compact`, `/sessions`, `/resume <id>` | conversation |
 | `/cost`, `/tasks`, `/tools`, `/config`, `/memory`, `/init` | info and setup |
-| `/diff [--staged] [paths]`, `/status`, `/commit <msg>`, `/log [n]` | git |
+| `/status` | dashboard of every feature and its live state |
+| `/diff [--staged] [paths]`, `/commit <msg>`, `/log [n]` | git |
+| `/theme [name]`, `/density [compact\|expanded]` | appearance |
 | `/undo [yes]`, `/checkpoints [restore <id> [yes]]` | undo file changes |
 | `/worktree new <name> \| list \| rm <name> [--force]` | git worktrees |
 | `/mcp [reconnect <name>]`, `/hooks`, `/sandbox`, `/provider`, `/plugins [reload]` | integrations |
@@ -249,7 +251,7 @@ are ignored unless your **user** config sets `"trust_project_hooks": true`.
 
 A hook gets a JSON payload on stdin (`event`, `session_id`, `cwd`,
 `tool_name`, `tool_input`, `tool_output`, `is_error`, `prompt`) and the
-variables `GTA_PROJECT_DIR` and `GTA_SESSION_ID`.
+variables `GTA_PROJECT_DIR`, `GTA_SESSION_ID`, `GTA_EVENT` and `GTA_TOOL_NAME`.
 
 - Exit code **2** blocks: the tool call, prompt or stop is refused and
   stderr is the reason. A blocked `stop` sends the model back to work (at
@@ -310,8 +312,7 @@ run. Add or override servers with `lsp_servers`:
 
 A planner agent explores the code and writes a step-by-step plan, a reviewer
 agent critiques it, and you see the result in an approval dialog: run it
-asking before each edit, run it with edits auto-approved, or send it back
-with changes. After execution a verifier compares the diff and the test
+asking before each edit, run it with edits auto-approved, or reject it. After execution a verifier compares the diff and the test
 results with the plan. `/fixtests 5` runs the test suite and fixes failures,
 at most 5 rounds. The `verify` tool lets the model run the project's tests
 at any time and get a structured failure report.
@@ -369,7 +370,8 @@ providers, and tells you:
 ```
 
 A route that keeps failing is skipped for a while (circuit breaker), and
-`rpm` / `tpm` keep you under a provider's limits.
+`rpm` / `tpm` keep you under a provider's limits. The router (and the `routing`
+settings) is active when `fallback_models` is set.
 
 ### Observability
 
@@ -441,6 +443,11 @@ Text streams to stdout (or one JSON object with `--json`), tool activity to
 stderr. Actions that would need approval are declined, so choose a
 permission mode that fits the job. The session is saved, so `gta -c` can
 pick it up interactively.
+
+## Documentation
+
+Full reference docs are in [docs/](docs/README.md): commands, configuration,
+architecture, security, plugins, the server API and observability.
 
 ## Development
 
