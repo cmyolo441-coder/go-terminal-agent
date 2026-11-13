@@ -100,11 +100,14 @@ func (s *headlessSink) Approve(_ context.Context, c *tools.Call, _ string) permi
 func RunHeadless(ctx context.Context, ag *agent.Agent, promptText, sessionID string, asJSON bool, out, log io.Writer) error {
 	start := time.Now()
 	sink := &headlessSink{out: out, log: log, json: asJSON}
-	body, attached := expandMentions(ag.Env, promptText)
+	msg, attached, problems := buildPrompt(ag.Env, promptText)
 	for _, a := range attached {
 		fmt.Fprintf(log, "attached %s\n", a)
 	}
-	runErr := ag.Run(ctx, llm.UserText(body), sink)
+	for _, p := range problems {
+		fmt.Fprintf(log, "not attached: %s\n", p)
+	}
+	runErr := ag.Run(ctx, msg, sink)
 	u, cost, _ := ag.Stats()
 	if !asJSON {
 		if sink.newline {

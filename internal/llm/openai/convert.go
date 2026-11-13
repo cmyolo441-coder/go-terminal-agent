@@ -34,6 +34,42 @@ type chatMessage struct {
 	Content    *string        `json:"content"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
+	// Parts, when set, replaces Content with an array of text and image
+	// parts. Only user messages carry them.
+	Parts []contentPart `json:"-"`
+}
+
+// MarshalJSON sends Parts as the content array when a message has any.
+func (m chatMessage) MarshalJSON() ([]byte, error) {
+	type plain chatMessage
+	if len(m.Parts) == 0 {
+		return json.Marshal(plain(m))
+	}
+	return json.Marshal(struct {
+		plain
+		Content []contentPart `json:"content"`
+	}{plain(m), m.Parts})
+}
+
+// contentPart is one element of a multimodal user message.
+type contentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *imageURL `json:"image_url,omitempty"`
+}
+
+type imageURL struct {
+	URL string `json:"url"`
+}
+
+func textPart(s string) contentPart { return contentPart{Type: "text", Text: s} }
+
+func imagePart(img llm.Image) (contentPart, error) {
+	r, err := img.Resolve()
+	if err != nil {
+		return contentPart{}, err
+	}
+	return contentPart{Type: "image_url", ImageURL: &imageURL{URL: r.DataURL()}}, nil
 }
 
 type chatToolCall struct {
@@ -65,6 +101,7 @@ const (
 	toolErrorPrefix  = "Error: "
 	interruptedTool  = "(no result: the tool call was interrupted before it completed)"
 	orphanResultLead = "Result of an earlier tool call"
+	toolImagesLead   = "Images returned by tool call"
 )
 
 // buildRequest converts a provider-neutral request to the wire request.
@@ -200,34 +237,74 @@ func toMessages(system string, history []llm.Message) ([]chatMessage, error) {
 			}
 			out = append(out, msg)
 		default:
-			var texts []string
+			// parts keeps text and images in order; images is the count of
+			// image parts, which decides between a string and an array.
+			var parts []contentPart
+			images := 0
+			addImage := func(img llm.Image, what string) error {
+				p, err := imagePart(img)
+				if err != nil {
+					return fmt.Errorf("message %d: %s: %w", i, what, err)
+				}
+				parts = append(parts, p)
+				images++
+				return nil
+			}
 			for _, b := range m.Blocks {
 				switch b.Type {
 				case llm.BlockText:
 					if b.Text != "" {
-						texts = append(texts, b.Text)
+						parts = append(parts, textPart(b.Text))
+					}
+				case llm.BlockImage:
+					if b.Image == nil {
+						return nil, fmt.Errorf("message %d: image block without an image", i)
+					}
+					if err := addImage(*b.Image, "image"); err != nil {
+						return nil, err
 					}
 				case llm.BlockToolResult:
 					content := toolResultText(b)
+					// The tool role only takes text, so images a tool
+					// returned follow in the next user message.
+					if n := len(b.Images); n > 0 {
+						content += fmt.Sprintf("\n\n(%s attached in the next message.)", plural(n, "image is", "images are"))
+					}
 					if contains(pending, b.ToolUseID) && !answered[b.ToolUseID] {
 						answered[b.ToolUseID] = true
 						out = append(out, chatMessage{Role: "tool", ToolCallID: b.ToolUseID, Content: str(content)})
-						continue
+					} else {
+						label := orphanResultLead
+						if b.ToolUseID != "" {
+							label += " (" + b.ToolUseID + ")"
+						}
+						parts = append(parts, textPart(label+":\n"+content))
 					}
-					label := orphanResultLead
-					if b.ToolUseID != "" {
-						label += " (" + b.ToolUseID + ")"
+					if len(b.Images) > 0 {
+						parts = append(parts, textPart(toolImagesLead+" ("+b.ToolUseID+"):"))
+						for k, img := range b.Images {
+							if err := addImage(img, fmt.Sprintf("tool result %s image %d", b.ToolUseID, k+1)); err != nil {
+								return nil, err
+							}
+						}
 					}
-					texts = append(texts, label+":\n"+content)
 				}
 			}
-			if len(texts) == 0 {
+			if len(parts) == 0 {
 				continue
 			}
 			// Text after tool results starts a new user turn, so every
 			// outstanding call must be answered first.
 			flushPending()
-			out = append(out, chatMessage{Role: "user", Content: str(strings.Join(texts, "\n\n"))})
+			if images == 0 {
+				texts := make([]string, len(parts))
+				for k, p := range parts {
+					texts[k] = p.Text
+				}
+				out = append(out, chatMessage{Role: "user", Content: str(strings.Join(texts, "\n\n"))})
+				continue
+			}
+			out = append(out, chatMessage{Role: "user", Parts: parts})
 		}
 	}
 	flushPending()
@@ -261,6 +338,13 @@ func compactArgs(raw json.RawMessage) (string, error) {
 }
 
 func str(s string) *string { return &s }
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

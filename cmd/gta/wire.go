@@ -106,37 +106,34 @@ func buildHooks(cfg config.Config, root, sessionID string) (*hooks.Runner, error
 	return hooks.NewRunner(cfg.Hooks, hooks.Options{Root: root, SessionID: sessionID})
 }
 
-// addTaskTool registers the sub-agent "task" tool on ag. Sub-agent approvals,
+// addTaskTool adds the sub-agent "task" tool to ts. Sub-agent approvals,
 // progress and usage go through whatever sink the parent turn is using.
-func addTaskTool(ag *agent.Agent, cfg config.Config, root string) {
-	base := ag.Tools
-	t := subagent.New(subagent.Config{
-		Provider:      ag.Provider,
-		Settings:      ag.Settings,
-		Model:         cfg.SubagentModel,
-		Tools:         base,
-		AllowCommands: cfg.AllowCommands,
-		ParentMode:    ag.Gate.Mode,
-		Instructions:  prompt.Memory(root),
-		Approve: func(ctx context.Context, call *tools.Call, reason string) permission.Decision {
-			if s := ag.ActiveSink(); s != nil {
-				return s.Approve(ctx, call, reason)
-			}
-			return permission.DecisionDeny
-		},
-		Progress: func(index int, description, event string) {
-			if ps, ok := ag.ActiveSink().(agent.ProgressSink); ok {
-				ps.SubagentProgress(index, description, event)
-			}
-		},
-		OnUsage: ag.AddUsage,
-	})
-	all := []tools.Tool{}
-	for _, name := range base.Names() {
-		tl, _ := base.Get(name)
-		all = append(all, tl)
+func addTaskTool(ag *agent.Agent, cfg config.Config, root string, ts *toolset) {
+	instructions := prompt.Memory(root)
+	ts.extra = func(base *tools.Registry) []tools.Tool {
+		return []tools.Tool{subagent.New(subagent.Config{
+			Provider:      ag.Provider,
+			Settings:      ag.Settings,
+			Model:         cfg.SubagentModel,
+			Tools:         base,
+			AllowCommands: cfg.AllowCommands,
+			ParentMode:    ag.Gate.Mode,
+			Instructions:  instructions,
+			Approve: func(ctx context.Context, call *tools.Call, reason string) permission.Decision {
+				if s := ag.ActiveSink(); s != nil {
+					return s.Approve(ctx, call, reason)
+				}
+				return permission.DecisionDeny
+			},
+			Progress: func(index int, description, event string) {
+				if ps, ok := ag.ActiveSink().(agent.ProgressSink); ok {
+					ps.SubagentProgress(index, description, event)
+				}
+			},
+			OnUsage: ag.AddUsage,
+		})}
 	}
-	ag.Tools = tools.NewRegistry(append(all, t)...)
+	ts.rebuild()
 }
 
 // sessionStartContext runs session_start hooks and returns text to add to
@@ -170,21 +167,11 @@ func authHint() string {
 // rebuilding the registry whenever a server's tool list changes. Startup
 // waits at most mcpStartTimeout; slower servers keep connecting and their
 // tools appear when ready.
-func startMCP(ag *agent.Agent, cfg config.Config, root string, uiStarted *atomic.Bool) *mcp.Manager {
+func startMCP(ag *agent.Agent, cfg config.Config, root string, uiStarted *atomic.Bool, ts *toolset) *mcp.Manager {
 	if len(cfg.MCPServers) == 0 {
 		return nil
 	}
-	base := ag.Registry()
-	builtins := make([]tools.Tool, 0, len(base.Names()))
-	for _, name := range base.Names() {
-		t, _ := base.Get(name)
-		builtins = append(builtins, t)
-	}
-	var m *mcp.Manager
-	rebuild := func() {
-		ag.SetRegistry(tools.NewRegistry(append(append([]tools.Tool{}, builtins...), m.Tools()...)...))
-	}
-	m = mcp.NewManager(mcp.Options{
+	m := mcp.NewManager(mcp.Options{
 		Dir: root,
 		Logf: func(format string, args ...any) {
 			msg := fmt.Sprintf(format, args...)
@@ -194,18 +181,15 @@ func startMCP(ag *agent.Agent, cfg config.Config, root string, uiStarted *atomic
 				s.Notice("MCP: " + msg)
 			}
 		},
-		OnChange: func() {
-			if m != nil {
-				rebuild()
-			}
-		},
+		OnChange: ts.rebuild,
 	})
+	ts.setMCP(m)
 	ctx, cancel := context.WithTimeout(context.Background(), mcpStartTimeout)
 	defer cancel()
 	if err := m.Start(ctx, cfg.MCPServers); err != nil {
 		fmt.Fprintln(os.Stderr, "gta: mcp:", err)
 	}
-	rebuild()
+	ts.rebuild()
 	for _, st := range m.Status() {
 		if st.State == mcp.StateFailed {
 			fmt.Fprintf(os.Stderr, "gta: mcp server %s failed: %v (see /mcp)\n", st.Name, st.Err)

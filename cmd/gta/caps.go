@@ -27,6 +27,7 @@ type capSources struct {
 	hooks    *hooks.Runner
 	mcp      *mcp.Manager
 	cp       *checkpoint.Store
+	ts       *toolset
 	// extra lets later integrations add their own lines.
 	extra []func() []ui.Capability
 }
@@ -135,6 +136,9 @@ func (s *capSources) capabilities() []ui.Capability {
 			state, val = ui.CapWarn, "project hooks/MCP ignored (untrusted)"
 		}
 		add("Integrations", "hooks", val, state, true)
+	}
+	if s.ts != nil {
+		out = append(out, pluginCaps(s.ts)...)
 	}
 	for _, f := range s.extra {
 		out = append(out, f()...)

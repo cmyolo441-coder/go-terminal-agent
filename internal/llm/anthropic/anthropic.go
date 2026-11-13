@@ -171,12 +171,21 @@ func ToParams(history []llm.Message) ([]anthropic.BetaMessageParam, error) {
 					if b.Text != "" {
 						blocks = append(blocks, anthropic.NewBetaTextBlock(b.Text))
 					}
-				case llm.BlockToolResult:
-					text := b.Text
-					if text == "" {
-						text = "(no output)"
+				case llm.BlockImage:
+					if b.Image == nil {
+						return nil, fmt.Errorf("message %d: image block without an image", i)
 					}
-					blocks = append(blocks, anthropic.NewBetaToolResultBlock(b.ToolUseID, text, b.IsError))
+					src, err := imageSource(*b.Image)
+					if err != nil {
+						return nil, fmt.Errorf("message %d: %w", i, err)
+					}
+					blocks = append(blocks, anthropic.NewBetaImageBlock(src))
+				case llm.BlockToolResult:
+					tr, err := toolResult(b)
+					if err != nil {
+						return nil, fmt.Errorf("message %d: %w", i, err)
+					}
+					blocks = append(blocks, tr)
 				}
 			}
 			if len(blocks) == 0 {
@@ -186,6 +195,38 @@ func ToParams(history []llm.Message) ([]anthropic.BetaMessageParam, error) {
 		}
 	}
 	return out, nil
+}
+
+// imageSource resolves an image and converts it to a base64 source.
+func imageSource(img llm.Image) (anthropic.BetaBase64ImageSourceParam, error) {
+	r, err := img.Resolve()
+	if err != nil {
+		return anthropic.BetaBase64ImageSourceParam{}, err
+	}
+	return anthropic.BetaBase64ImageSourceParam{
+		Data:      r.Data,
+		MediaType: anthropic.BetaBase64ImageSourceMediaType(r.MediaType),
+	}, nil
+}
+
+// toolResult converts a tool result. Images returned by the tool go inside
+// the tool_result content, after its text, which the Messages API accepts.
+func toolResult(b llm.Block) (anthropic.BetaContentBlockParamUnion, error) {
+	text := b.Text
+	if text == "" {
+		text = "(no output)"
+	}
+	block := anthropic.NewBetaToolResultBlock(b.ToolUseID, text, b.IsError)
+	for k, img := range b.Images {
+		src, err := imageSource(img)
+		if err != nil {
+			return anthropic.BetaContentBlockParamUnion{}, fmt.Errorf("tool result %s image %d: %w", b.ToolUseID, k+1, err)
+		}
+		block.OfToolResult.Content = append(block.OfToolResult.Content, anthropic.BetaToolResultBlockParamContentUnion{
+			OfImage: &anthropic.BetaImageBlockParam{Source: anthropic.BetaImageBlockParamSourceUnion{OfBase64: &src}},
+		})
+	}
+	return block, nil
 }
 
 func assistant(blocks []anthropic.BetaContentBlockParamUnion) anthropic.BetaMessageParam {

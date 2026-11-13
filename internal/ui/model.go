@@ -559,12 +559,15 @@ func (m *model) submit(text string) tea.Cmd {
 // startRun sends a prompt to the agent. shown is what the transcript shows.
 func (m *model) startRun(text, shown string) tea.Cmd {
 	m.emit(renderUser(shown, m.width))
-	body, attached := expandMentions(m.ag.Env, text)
+	msg, attached, problems := buildPrompt(m.ag.Env, text)
 	for _, a := range attached {
 		m.emit(sFaint.Render("  "+gResult+"  ") + sMuted.Render("Attached "+a))
 	}
+	for _, p := range problems {
+		m.emit(sFaint.Render("  "+gResult+"  ") + sAmber.Render("Not attached: "+p))
+	}
 	if len(m.pending) > 0 {
-		body = strings.Join(m.pending, "\n\n") + "\n\n" + body
+		msg.Blocks[0].Text = strings.Join(m.pending, "\n\n") + "\n\n" + msg.Blocks[0].Text
 		m.pending = nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -578,7 +581,7 @@ func (m *model) startRun(text, shown string) tea.Cmd {
 	m.costKnown = false
 	ag, prog := m.ag, m.prog
 	go func() {
-		err := ag.Run(ctx, llm.UserText(body), teaSink{prog})
+		err := ag.Run(ctx, msg, teaSink{prog})
 		prog.Send(runDoneMsg{err})
 	}()
 	return tick()

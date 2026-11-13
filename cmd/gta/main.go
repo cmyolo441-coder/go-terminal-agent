@@ -175,7 +175,11 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "gta: ignoring hooks in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")
 	}
 
-	ag := agent.New(provider, tools.Default(), env, permission.NewGate(mode, cfg.AllowCommands), system, agent.Settings{
+	ts := newToolset(cfg, root)
+	for _, n := range ts.notes {
+		fmt.Fprintln(os.Stderr, "gta:", n)
+	}
+	ag := agent.New(provider, ts.base(), env, permission.NewGate(mode, cfg.AllowCommands), system, agent.Settings{
 		Model:        cfg.Model,
 		Effort:       cfg.Effort,
 		MaxTokens:    cfg.MaxTokens,
@@ -183,18 +187,20 @@ func run(args []string) error {
 		MaxTurns:     cfg.MaxTurns,
 	})
 	ag.Hooks = hookRunner
-	addTaskTool(ag, cfg, root)
+	ts.ag = ag
+	addTaskTool(ag, cfg, root, ts)
 	cp, cpErr := setupCheckpoints(ag, sess.ID)
 	if cpErr != nil {
 		fmt.Fprintln(os.Stderr, "gta: checkpoints disabled:", cpErr)
 	}
 	var uiStarted atomic.Bool
-	mcpManager := startMCP(ag, cfg, root, &uiStarted)
+	mcpManager := startMCP(ag, cfg, root, &uiStarted, ts)
 	if mcpManager != nil {
 		defer mcpManager.Close()
 	}
 	registerCommands(root, cfg, cp, hookRunner, policy, mcpManager)
-	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp}
+	registerPluginCommands(ts)
+	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts}
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}

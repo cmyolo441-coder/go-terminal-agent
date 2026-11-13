@@ -475,13 +475,49 @@ var mentionRe = regexp.MustCompile(`(^|\s)@([^\s]+)`)
 
 const maxAttach = 256 << 10
 
-// expandMentions appends the contents of @-mentioned files to the prompt.
+// imageExts are the file types an @-mention attaches as a picture.
+var imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true}
+
+// buildPrompt turns typed text into a user message: @-mentioned text files
+// are appended to the prompt and @-mentioned images become image blocks
+// (stored by path, loaded when sent). It returns what was attached and any
+// mentions that could not be attached.
+func buildPrompt(env *tools.Env, text string) (llm.Message, []string, []string) {
+	body, attached := expandMentions(env, text)
+	msg := llm.UserText(body)
+	var problems []string
+	seen := map[string]bool{}
+	for _, mm := range mentionRe.FindAllStringSubmatch(text, -1) {
+		ref := strings.TrimRight(mm[2], ".,;:!?)")
+		if !imageExts[strings.ToLower(filepath.Ext(ref))] {
+			continue
+		}
+		abs := env.Resolve(ref)
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		if _, err := llm.LoadImage(abs); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", ref, err))
+			continue
+		}
+		msg.Blocks = append(msg.Blocks, llm.Block{Type: llm.BlockImage, Image: &llm.Image{Path: abs}})
+		attached = append(attached, env.Rel(abs)+" (image)")
+	}
+	return msg, attached, problems
+}
+
+// expandMentions appends the contents of @-mentioned text files to the
+// prompt. Images and binary files are skipped here.
 func expandMentions(env *tools.Env, text string) (string, []string) {
 	var attached []string
 	var parts []string
 	seen := map[string]bool{}
 	for _, mm := range mentionRe.FindAllStringSubmatch(text, -1) {
 		ref := strings.TrimRight(mm[2], ".,;:!?)")
+		if imageExts[strings.ToLower(filepath.Ext(ref))] {
+			continue
+		}
 		abs := env.Resolve(ref)
 		if seen[abs] {
 			continue

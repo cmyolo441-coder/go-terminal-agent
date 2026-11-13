@@ -26,6 +26,8 @@ const (
 	// BlockServerTool is a tool the provider ran on its side (for example web
 	// search). It is kept for display only; replay uses Message.Native.
 	BlockServerTool BlockType = "server_tool"
+	// BlockImage is a picture sent by the user. Block.Image holds it.
+	BlockImage BlockType = "image"
 )
 
 // Block is one piece of message content.
@@ -36,6 +38,12 @@ type Block struct {
 	ToolName  string          `json:"tool_name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	// Image is the picture of a BlockImage block.
+	Image *Image `json:"image,omitempty"`
+	// Images are pictures returned with a BlockToolResult, for example a
+	// screenshot. Providers that cannot put images inside a tool result
+	// send them in a user message right after it.
+	Images []Image `json:"images,omitempty"`
 }
 
 // Message is one conversation turn.

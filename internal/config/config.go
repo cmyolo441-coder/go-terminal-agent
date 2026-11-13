@@ -60,6 +60,15 @@ type Config struct {
 	// use. Like hooks, servers from a project file need trust_project_hooks.
 	MCPServers mcp.Config `json:"mcp_servers,omitempty"`
 
+	// DisablePlugins turns the plugin system off; DisabledPlugins skips
+	// individual plugins by name. Project plugins need trust_project_hooks.
+	DisablePlugins  bool     `json:"disable_plugins"`
+	DisabledPlugins []string `json:"disabled_plugins,omitempty"`
+	// ClientWebTools adds GTA's own web_fetch/web_search tools for Claude
+	// too (they are always on for other providers). web_search needs
+	// BRAVE_API_KEY, TAVILY_API_KEY or SEARXNG_URL.
+	ClientWebTools bool `json:"client_web_tools"`
+
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
 	IgnoredProjectHooks bool `json:"-"`

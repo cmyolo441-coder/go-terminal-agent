@@ -277,3 +277,12 @@ func isBinary(b []byte) bool {
 func NewCall(tool string, kind Kind, summary, preview, command string, run func(ctx context.Context) (string, error)) *Call {
 	return &Call{Tool: tool, Kind: kind, Summary: summary, Preview: preview, Command: command, run: run}
 }
+
+// All returns the registered tools in registration order.
+func (r *Registry) All() []Tool {
+	out := make([]Tool, 0, len(r.order))
+	for _, n := range r.order {
+		out = append(out, r.byName[n])
+	}
+	return out
+}
