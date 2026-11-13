@@ -8,10 +8,10 @@
     is installed when the checksum does not match.
 
     irm https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.ps1 | iex
-    & ([scriptblock]::Create((irm .../install.ps1))) -Version v1.2.3
+    & ([scriptblock]::Create((irm .../install.ps1))) -Version vX.Y.Z
 
 .PARAMETER Version
-    Release to install, e.g. v1.2.3 or 1.2.3. Default: $env:GTA_VERSION, else the latest release.
+    Release to install, as vX.Y.Z or X.Y.Z. Default: $env:GTA_VERSION, else the latest release.
 
 .PARAMETER InstallDir
     Where to put gta.exe. Default: $env:GTA_INSTALL_DIR, else %LOCALAPPDATA%\Programs\gta.
@@ -68,12 +68,21 @@ if (-not $Version -or $Version -eq 'latest') {
         $release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'gta-install' }
         $Version = [string]$release.tag_name
     } catch {
-        Fail "could not find the latest release of $Repo (pin one: -Version v1.2.3): $($_.Exception.Message)"
+        $err = $_.Exception.Message
+        $none = $false
+        try {
+            $list = @(Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases?per_page=1" -Headers @{ 'User-Agent' = 'gta-install' })
+            $none = ($list.Count -eq 0)
+        } catch { }
+        if ($none) {
+            Fail "no release of $Repo has been published yet. Install from source instead (needs Go 1.26+): go install github.com/$Repo/cmd/gta@latest"
+        }
+        Fail "could not find the latest release of $Repo (pin one: -Version vX.Y.Z): $err"
     }
 }
 $Version = $Version -replace '^v', ''
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
-    Fail "not a release version: $Version (want e.g. 1.2.3 or v1.2.3)"
+    Fail "not a release version: $Version (want X.Y.Z or vX.Y.Z)"
 }
 
 $archive = "gta_${Version}_windows_${arch}.zip"

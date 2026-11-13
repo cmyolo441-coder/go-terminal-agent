@@ -65,12 +65,13 @@ your shell (no fullscreen takeover), behind a compact double-line prompt box.
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows (the installer checks the
-release's `checksums.txt` before installing):
+Prebuilt binaries for Linux, macOS and Windows, once a release is published
+(the installer checks the release's `checksums.txt` before installing; until
+the first release, use `go install` below):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh
-curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh -s -- v1.2.3   # pin a version
+curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh -s -- vX.Y.Z   # pin a release (replace vX.Y.Z)
 ```
 
 On Windows (PowerShell):

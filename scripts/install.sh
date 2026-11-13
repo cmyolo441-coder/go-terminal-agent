@@ -2,8 +2,8 @@
 # Install gta from a GitHub release of cmyolo441-coder/go-terminal-agent.
 #
 #   curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/main/scripts/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- v1.2.3      # a pinned version
-#   GTA_VERSION=1.2.3 sh install.sh                  # same, from the environment
+#   curl -fsSL .../install.sh | sh -s -- vX.Y.Z      # a pinned version (placeholder)
+#   GTA_VERSION=X.Y.Z sh install.sh                  # same, from the environment
 #   GTA_INSTALL_DIR=/usr/local/bin sh install.sh     # default: ~/.local/bin
 #
 # The archive is checked against the release's checksums.txt (SHA-256) before
@@ -26,7 +26,7 @@ Usage: install.sh [VERSION]
 
 Installs the gta binary from GitHub releases.
 
-  VERSION          release to install, e.g. v1.2.3 or 1.2.3 (default: latest)
+  VERSION          release to install, as vX.Y.Z or X.Y.Z (default: latest)
 
 Environment:
   GTA_VERSION      same as the VERSION argument (the argument wins)
@@ -110,16 +110,30 @@ download() {
 	fi
 }
 
-# latest_tag prints the tag of the newest (non pre-release) release.
+# latest_tag prints the tag of the newest (non pre-release) release. It
+# returns 2 when the repository has no release yet and 1 on other failures.
 latest_tag() {
 	if [ "$downloader" = curl ]; then
 		# .../releases/latest redirects to .../releases/tag/<tag>; this avoids
-		# the API's rate limit.
+		# the API's rate limit. With no release yet, GitHub redirects to the
+		# plain .../releases page instead.
 		url="$(curl --proto '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' \
 			"https://github.com/$REPO/releases/latest")" || return 1
-		tag="${url##*/}"
+		case "$url" in
+		*/releases/tag/?*) tag="${url##*/}" ;;
+		*/releases | */releases/ | */releases/latest) return 2 ;;
+		*) return 1 ;;
+		esac
 	else
-		json="$(wget --https-only -q -O - "https://api.github.com/repos/$REPO/releases/latest")" || return 1
+		# The API answers 404 when there is no release; wget cannot tell
+		# that apart from other errors, so ask the releases list.
+		json="$(wget --https-only -q -O - "https://api.github.com/repos/$REPO/releases/latest")" || {
+			list="$(wget --https-only -q -O - "https://api.github.com/repos/$REPO/releases?per_page=1")" || return 1
+			case "$(printf '%s' "$list" | tr -d '[:space:]')" in
+			'[]') return 2 ;;
+			*) return 1 ;;
+			esac
+		}
 		tag="$(printf '%s\n' "$json" | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
 	fi
 	[ -n "$tag" ] && [ "$tag" != latest ] || return 1
@@ -127,13 +141,20 @@ latest_tag() {
 }
 
 if [ -z "$version" ] || [ "$version" = latest ]; then
-	version="$(latest_tag)" || die "could not find the latest release of $REPO (pin one: install.sh v1.2.3)"
+	status=0
+	version="$(latest_tag)" || status=$?
+	case "$status" in
+	0) ;;
+	2) die "no release of $REPO has been published yet. Install from source instead (needs Go 1.26+):
+    go install github.com/$REPO/cmd/gta@latest" ;;
+	*) die "could not find the latest release of $REPO (pin one: install.sh vX.Y.Z)" ;;
+	esac
 fi
 version="${version#v}"
 
 # Only a plain semantic version may go into a URL or a file name.
 if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-	die "not a release version: $version (want e.g. 1.2.3 or v1.2.3)"
+	die "not a release version: $version (want X.Y.Z or vX.Y.Z)"
 fi
 
 archive="${BINARY}_${version}_${os}_${arch}.tar.gz"
