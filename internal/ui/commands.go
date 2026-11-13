@@ -64,6 +64,8 @@ func init() {
 		{name: "effort", args: "[level]", help: "Reasoning effort: low, medium, high, xhigh, max", run: cmdEffort},
 		{name: "mode", args: "[mode]", help: "Permissions: ask, auto-edit, plan, yolo", run: cmdMode},
 		{name: "thinking", help: "Toggle showing the model's reasoning summary", run: cmdThinking},
+		{name: "theme", aliases: []string{"themes"}, args: "[name]", help: "List color themes, or switch and preview one", run: cmdTheme},
+		{name: "density", aliases: []string{"layout"}, args: "[compact|expanded]", help: "How much tool output to show", run: cmdDensity},
 		{name: "cost", aliases: []string{"usage"}, help: "Token usage and estimated cost", run: cmdCost},
 		{name: "tasks", aliases: []string{"todos"}, help: "Show the agent's task list", run: cmdTodos},
 		{name: "compact", args: "[focus]", help: "Summarize the conversation to free context", run: cmdCompact},
@@ -183,12 +185,16 @@ func (m *model) printMarkdown(md string) {
 func cmdHelp(m *model, _ string) tea.Cmd {
 	var b strings.Builder
 	b.WriteString(sAccentB.Render("Commands") + "\n")
+	col := 24
+	for _, c := range allCommands() {
+		col = max(col, min(32, len("/"+c.name+" "+c.args)+2))
+	}
 	for _, c := range allCommands() {
 		name := "/" + c.name
 		if c.args != "" {
 			name += " " + c.args
 		}
-		b.WriteString("  " + sAccent2.Render(padRight(name, 24)) + sMuted.Render(c.help) + "\n")
+		b.WriteString("  " + sAccent2.Render(padRight(name, col)) + sMuted.Render(c.help) + "\n")
 	}
 	b.WriteString("\n" + sAccentB.Render("Input") + "\n")
 	for _, kv := range [][2]string{
@@ -199,7 +205,7 @@ func cmdHelp(m *model, _ string) tea.Cmd {
 		{"shift+tab", "cycle permission mode"},
 		{"esc", "interrupt the agent · ctrl+c twice to exit"},
 	} {
-		b.WriteString("  " + sKey.Render(padRight(kv[0], 24)) + sMuted.Render(kv[1]) + "\n")
+		b.WriteString("  " + sKey.Render(padRight(kv[0], col)) + sMuted.Render(kv[1]) + "\n")
 	}
 	m.emit(strings.TrimRight(b.String(), "\n"))
 	return nil
@@ -484,8 +490,8 @@ func (m *model) runShell(cmd string) tea.Cmd {
 	}
 }
 
-func renderShell(cmd, output string, err error, width int) string {
-	lines := tailLines(output, 20, width-6, err != nil)
+func renderShell(cmd, output string, err error, width, tail int) string {
+	lines := tailLines(output, tail, width-6, err != nil)
 	if output == "" && err != nil {
 		lines = []string{sRed.Render(err.Error())}
 	}

@@ -45,6 +45,10 @@ type Options struct {
 	// Capabilities reports integrations (provider, sandbox, MCP, hooks,
 	// git, policy...) for the banner and the /status dashboard.
 	Capabilities func() []Capability
+	// Density is how much tool output the transcript shows: "compact"
+	// (default) collapses long output behind a "+K lines" hint, "expanded"
+	// shows much more. /density switches it at runtime.
+	Density string
 }
 
 type phase int
@@ -69,6 +73,10 @@ type model struct {
 	prog *tea.Program
 	pr   *printer
 	md   *mdRenderer
+
+	density density
+	// startup notes printed under the banner (bad theme or density names).
+	startNotes []string
 
 	width  int
 	height int
@@ -118,22 +126,17 @@ type runningTool struct {
 
 // Run starts the interactive UI and blocks until the user exits.
 func Run(opts Options) error {
-	dark := lipgloss.HasDarkBackground()
-	style := "dark"
-	switch opts.Config.Theme {
-	case "light":
-		style = "light"
-	case "dark":
-	default:
-		if !dark {
-			style = "light"
-		}
-	}
+	termDark = lipgloss.HasDarkBackground()
+	theme, themeErr := resolveTheme(opts.Config.Theme, noColor())
+	applyTheme(theme)
 	width := 100
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
 	}
-	m := newModel(opts, style, width)
+	m := newModel(opts, width)
+	if themeErr != nil {
+		m.startNotes = append(m.startNotes, themeErr.Error())
+	}
 	prog := tea.NewProgram(m)
 	m.prog = prog
 	m.pr.start(prog)
@@ -143,7 +146,8 @@ func Run(opts Options) error {
 	return err
 }
 
-func newModel(opts Options, style string, width int) *model {
+// newModel builds the model in the active theme (see applyTheme).
+func newModel(opts Options, width int) *model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask anything · / for commands · @ to attach a file · ! to run a shell command"
 	ta.ShowLineNumbers = false
@@ -157,29 +161,44 @@ func newModel(opts Options, style string, width int) *model {
 		}
 		return "  "
 	})
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.Base = lipgloss.NewStyle()
-	ta.FocusedStyle.Prompt = sAccentB
-	ta.FocusedStyle.Text = sText
-	ta.FocusedStyle.Placeholder = sFaint
-	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle()
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
 	ta.Focus()
+	d, ok := parseDensity(opts.Density)
 	m := &model{
-		opts:  opts,
-		ag:    opts.Agent,
-		sess:  opts.Session,
-		pr:    newPrinter(),
-		md:    newMD(style),
-		width: width,
-		input: ta,
+		opts:    opts,
+		ag:      opts.Agent,
+		sess:    opts.Session,
+		pr:      newPrinter(),
+		md:      &mdRenderer{},
+		width:   width,
+		input:   ta,
+		density: d,
 	}
+	if !ok {
+		m.startNotes = append(m.startNotes, fmt.Sprintf("unknown density %q; using compact (choose %s)", opts.Density, strings.Join(DensityNames(), " or ")))
+	}
+	m.restyle()
 	m.layoutInput()
 	return m
 }
 
+// restyle points the input box and the Markdown renderer at the active
+// theme; call it after applyTheme.
+func (m *model) restyle() {
+	m.input.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	m.input.FocusedStyle.Base = lipgloss.NewStyle()
+	m.input.FocusedStyle.Prompt = sAccentB
+	m.input.FocusedStyle.Text = sText
+	m.input.FocusedStyle.Placeholder = sFaint
+	m.input.FocusedStyle.EndOfBuffer = lipgloss.NewStyle()
+	m.md.setTheme(currentTheme, termDark)
+}
+
 func (m *model) Init() tea.Cmd {
 	m.emit(m.banner())
+	for _, n := range m.startNotes {
+		m.emit(renderNotice(n))
+	}
 	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
 		return m.submit(p)
 	}
@@ -223,7 +242,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.verb = "Running"
 	case toolDoneMsg:
 		m.removeRunning(msg.id)
-		m.emit(renderToolDone(msg.call, msg.output, msg.err, m.width))
+		m.emit(renderToolDone(msg.call, msg.output, msg.err, m.width, m.density))
 	case toolFailedMsg:
 		m.flushStreams(true)
 		m.emit(renderToolFailed(msg.name, msg.reason, m.width))
@@ -263,7 +282,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.printMarkdown(msg.out)
 		}
 	case shellDoneMsg:
-		m.emit(renderShell(msg.cmd, msg.output, msg.err, m.width))
+		m.emit(renderShell(msg.cmd, msg.output, msg.err, m.width, m.density.shellTail))
 		m.pending = append(m.pending, fmt.Sprintf("I ran `%s` in the shell. Output:\n```\n%s\n```", msg.cmd, strings.TrimSpace(msg.output)))
 	}
 	return m, nil
@@ -690,7 +709,7 @@ func (m *model) flushThinking() {
 		return
 	}
 	if m.ag.Settings().ShowThinking {
-		m.emit(renderThinking(m.thinkBuf.String(), m.width))
+		m.emit(renderThinking(m.thinkBuf.String(), m.width, m.density.thinking))
 	}
 	m.thinkBuf.Reset()
 }
@@ -859,7 +878,7 @@ func (m *model) suggestView() string {
 		if c.args != "" {
 			name += " " + c.args
 		}
-		line := padRight(name, 26)
+		line := padRight(name, max(26, runewidth.StringWidth(name)+2))
 		if i == m.suggestAt {
 			b.WriteString(" " + sAccentB.Render(gPrompt+" "+line) + sText.Render(c.help))
 		} else {
@@ -910,7 +929,7 @@ func (m *model) approvalView() string {
 			body = append(body, sText.Render(clip(l, inner)))
 		}
 	case c.Kind == tools.KindWrite:
-		diff := renderDiff(c.Preview, inner, 18)
+		diff := renderDiff(c.Preview, inner, m.density.approvalRows(m.height))
 		if len(diff) == 0 {
 			diff = []string{sMuted.Render("(no textual change)")}
 		}

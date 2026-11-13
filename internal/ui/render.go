@@ -70,8 +70,9 @@ func resultBlock(lines []string) string {
 	return b.String()
 }
 
-// renderToolDone renders a finished tool call with a compact result.
-func renderToolDone(c *tools.Call, output string, err error, width int) string {
+// renderToolDone renders a finished tool call with its result, collapsed
+// or expanded according to the layout density.
+func renderToolDone(c *tools.Call, output string, err error, width int, d density) string {
 	head := toolHeader(c, err == nil)
 	inner := width - 6
 	if inner < 20 {
@@ -86,14 +87,16 @@ func renderToolDone(c *tools.Call, output string, err error, width int) string {
 		lines = append(lines, sMuted.Render(fmt.Sprintf("Read %d line%s", n, plural(n))))
 	case c.Tool == "write_file" || c.Tool == "edit_file":
 		add, del := diffStat(c.Preview)
-		lines = append(lines, sMuted.Render(fmt.Sprintf("%s  ", oneLine(output, inner)))+sGreen.Render(fmt.Sprintf("+%d", add))+" "+sRed.Render(fmt.Sprintf("−%d", del)))
-		lines = append(lines, renderDiff(c.Preview, inner, 40)...)
+		stat := fmt.Sprintf("+%d −%d", add, del)
+		msg := oneLine(output, max(8, inner-runewidth.StringWidth(stat)-2))
+		lines = append(lines, sMuted.Render(msg+"  ")+sGreen.Render(fmt.Sprintf("+%d", add))+" "+sRed.Render(fmt.Sprintf("−%d", del)))
+		lines = append(lines, renderDiff(c.Preview, inner, d.diffMax)...)
 	case c.Tool == "bash":
-		lines = append(lines, tailLines(output, 8, inner, err != nil)...)
+		lines = append(lines, tailLines(output, d.bashTail, inner, err != nil)...)
 	case c.Tool == "todo_write":
 		return "" // the task list renders on its own
 	default:
-		lines = append(lines, headLines(output, 6, inner)...)
+		lines = append(lines, headLines(output, d.toolHead, inner)...)
 	}
 	if rb := resultBlock(lines); rb != "" {
 		return head + "\n" + rb
@@ -106,83 +109,33 @@ func renderToolFailed(name, reason string, width int) string {
 	return head + "\n" + resultBlock([]string{sRed.Render(oneLine(reason, width-6))})
 }
 
-func renderDiff(diff string, width, max int) []string {
-	var out []string
-	lines := strings.Split(strings.TrimRight(diff, "\n"), "\n")
-	shown := 0
-	for _, l := range lines {
-		if strings.HasPrefix(l, "---") || strings.HasPrefix(l, "+++") || l == "" {
-			continue
-		}
-		if shown == max {
-			out = append(out, sFaint.Render(fmt.Sprintf("… %d more diff lines", countBody(lines)-max)))
-			break
-		}
-		shown++
-		l = clip(strings.ReplaceAll(l, "\t", "    "), width)
-		switch l[0] {
-		case '+':
-			out = append(out, sDiffAdd.Render(padRight(l, width)))
-		case '-':
-			out = append(out, sDiffDel.Render(padRight(l, width)))
-		case '@':
-			out = append(out, sDiffHunk.Render(l))
-		default:
-			out = append(out, sMuted.Render(l))
-		}
-	}
-	return out
-}
-
-func countBody(lines []string) int {
-	n := 0
-	for _, l := range lines {
-		if l != "" && !strings.HasPrefix(l, "---") && !strings.HasPrefix(l, "+++") {
-			n++
-		}
-	}
-	return n
-}
-
-func diffStat(diff string) (add, del int) {
-	for _, l := range strings.Split(diff, "\n") {
-		switch {
-		case strings.HasPrefix(l, "+++"), strings.HasPrefix(l, "---"):
-		case strings.HasPrefix(l, "+"):
-			add++
-		case strings.HasPrefix(l, "-"):
-			del++
-		}
-	}
-	return
-}
-
+// headLines shows the first n lines of s, then a "+K lines" hint.
 func headLines(s string, n, width int) []string {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {
 		return []string{sMuted.Render("(no output)")}
 	}
-	all := strings.Split(s, "\n")
+	kept, hidden := collapse(strings.Split(s, "\n"), n, false)
 	var out []string
-	for i, l := range all {
-		if i == n {
-			out = append(out, sFaint.Render(fmt.Sprintf("… +%d lines", len(all)-n)))
-			break
-		}
-		out = append(out, sMuted.Render(clip(strings.ReplaceAll(l, "\t", "  "), width)))
+	for _, l := range kept {
+		out = append(out, sMuted.Render(clip(sanitize(stripANSI(l)), width)))
+	}
+	if hidden > 0 {
+		out = append(out, sFaint.Render(fmt.Sprintf("… +%d lines", hidden)))
 	}
 	return out
 }
 
+// tailLines shows the last n lines of s after a "+K earlier lines" hint;
+// command output ends with what matters most.
 func tailLines(s string, n, width int, failed bool) []string {
 	s = strings.TrimRight(s, "\n")
-	all := strings.Split(s, "\n")
+	kept, hidden := collapse(strings.Split(s, "\n"), n, true)
 	var out []string
-	if len(all) > n {
-		out = append(out, sFaint.Render(fmt.Sprintf("… %d earlier lines", len(all)-n)))
-		all = all[len(all)-n:]
+	if hidden > 0 {
+		out = append(out, sFaint.Render(fmt.Sprintf("… +%d earlier lines", hidden)))
 	}
-	for _, l := range all {
+	for _, l := range kept {
 		st := sMuted
 		if strings.HasPrefix(l, "[exit code") {
 			st = sFaint
@@ -190,7 +143,7 @@ func tailLines(s string, n, width int, failed bool) []string {
 				st = sRed
 			}
 		}
-		out = append(out, st.Render(clip(strings.ReplaceAll(l, "\t", "  "), width)))
+		out = append(out, st.Render(clip(sanitize(stripANSI(l)), width)))
 	}
 	return out
 }
@@ -224,16 +177,15 @@ func renderTodos(todos []tools.Todo) string {
 	return b.String()
 }
 
-func renderThinking(text string, width int) string {
+func renderThinking(text string, width, maxLines int) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
 	}
 	wrapped := lipgloss.NewStyle().Width(width - 4).Render(text)
-	lines := strings.Split(wrapped, "\n")
-	const max = 16
-	if len(lines) > max {
-		lines = append(lines[:max], "…")
+	lines, hidden := collapse(strings.Split(wrapped, "\n"), maxLines, false)
+	if hidden > 0 {
+		lines = append(lines, fmt.Sprintf("… +%d lines", hidden))
 	}
 	var b strings.Builder
 	for i, l := range lines {
