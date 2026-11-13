@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 )
@@ -137,7 +138,7 @@ func (e *Env) Resolve(p string) string {
 
 // Rel renders a path relative to the root when it is inside it.
 func (e *Env) Rel(abs string) string {
-	if r, err := filepath.Rel(e.Root, abs); err == nil && !strings.HasPrefix(r, "..") {
+	if r, err := filepath.Rel(e.Root, abs); err == nil && e.Inside(abs) {
 		return r
 	}
 	return abs
@@ -147,6 +148,30 @@ func (e *Env) Rel(abs string) string {
 func (e *Env) Inside(abs string) bool {
 	r, err := filepath.Rel(e.Root, abs)
 	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator))
+}
+
+// Outside reports whether a write to abs lands outside the workspace: abs
+// itself is outside, or it is a symlink (or under a symlinked directory)
+// whose target is. Writes follow symlinks, so a link inside the workspace
+// must not make a write to ~/.bashrc look like a workspace edit.
+func (e *Env) Outside(abs string) bool {
+	if !e.Inside(abs) {
+		return true
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		real, err = filepath.EvalSymlinks(filepath.Dir(abs))
+		if err != nil {
+			return false
+		}
+		real = filepath.Join(real, filepath.Base(abs))
+	}
+	root, err := filepath.EvalSymlinks(e.Root)
+	if err != nil {
+		root = e.Root
+	}
+	r, err := filepath.Rel(root, real)
+	return err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator))
 }
 
 // MarkRead records that the user or model has seen a file's current content.
@@ -252,9 +277,16 @@ func truncate(s string, limit int) string {
 	if limit <= 0 || len(s) <= limit {
 		return s
 	}
+	// Cut on character boundaries so the output stays valid UTF-8.
 	head := limit * 2 / 3
-	tail := limit - head
-	return s[:head] + fmt.Sprintf("\n\n… [%d characters omitted] …\n\n", len(s)-limit) + s[len(s)-tail:]
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
+	}
+	tail := len(s) - (limit - limit*2/3)
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return s[:head] + fmt.Sprintf("\n\n… [%d characters omitted] …\n\n", tail-head) + s[tail:]
 }
 
 // skipDir lists directories that searches never descend into.

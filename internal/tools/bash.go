@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 )
@@ -105,11 +106,20 @@ func runShell(ctx context.Context, env *Env, command string, timeout time.Durati
 	cmd.Env = append(os.Environ(), "GTA=1", "TERM=dumb", "NO_COLOR=1", "GIT_PAGER=cat", "PAGER=cat")
 	cmd.Stdin = nil
 	setProcessGroup(cmd)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	// Keep only what truncate can show: a command such as `yes` must not
+	// fill memory before its timeout.
+	buf := newHeadTail(env.OutputLimit)
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	// A background process (`server &`) inherits the output pipe; once the
+	// shell itself has exited, stop waiting for it after a grace period
+	// instead of hanging until the timeout.
+	cmd.WaitDelay = shellWaitDelay
 	start := time.Now()
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	elapsed := time.Since(start).Round(10 * time.Millisecond)
 	out := truncate(strings.TrimRight(buf.String(), "\n"), env.OutputLimit)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -137,13 +147,79 @@ func runShell(ctx context.Context, env *Env, command string, timeout time.Durati
 	return result, nil
 }
 
+// shellWaitDelay is how long a finished shell's output pipes may stay open.
+const shellWaitDelay = 2 * time.Second
+
+// headTail keeps the first and last limit bytes written to it and counts
+// the rest, which is all truncate shows of a command's output. It is safe
+// for concurrent writes (stdout and stderr share it).
+type headTail struct {
+	mu      sync.Mutex
+	limit   int
+	head    []byte
+	tail    []byte // ring of the last limit bytes once head is full
+	pos     int
+	dropped int64
+}
+
+func newHeadTail(limit int) *headTail {
+	if limit <= 0 {
+		limit = 1 << 20
+	}
+	return &headTail{limit: limit}
+}
+
+func (h *headTail) Write(p []byte) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := len(p)
+	if room := h.limit - len(h.head); room > 0 {
+		k := min(room, len(p))
+		h.head = append(h.head, p[:k]...)
+		p = p[k:]
+	}
+	for len(p) > 0 {
+		if len(h.tail) < h.limit {
+			k := min(h.limit-len(h.tail), len(p))
+			h.tail = append(h.tail, p[:k]...)
+			p = p[k:]
+			continue
+		}
+		k := min(h.limit-h.pos, len(p))
+		copy(h.tail[h.pos:], p[:k])
+		h.dropped += int64(k)
+		h.pos = (h.pos + k) % h.limit
+		p = p[k:]
+	}
+	return n, nil
+}
+
+// String returns the kept output, with a marker where the middle was
+// dropped.
+func (h *headTail) String() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var b strings.Builder
+	b.Write(h.head)
+	if h.dropped > 0 {
+		fmt.Fprintf(&b, "\n… [%d bytes of output dropped] …\n", h.dropped)
+	}
+	b.Write(h.tail[h.pos:])
+	b.Write(h.tail[:h.pos])
+	return b.String()
+}
+
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i] + " …"
 	}
 	if len(s) > 80 {
-		s = s[:79] + "…"
+		cut := 79
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }

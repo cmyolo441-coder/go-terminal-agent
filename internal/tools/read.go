@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 )
@@ -99,9 +100,15 @@ func readFile(env *Env, abs string, offset, limit int) (string, error) {
 	}
 	var b strings.Builder
 	for i := start - 1; i < end; i++ {
-		line := lines[i]
+		// CRLF files are shown with plain line ends; edit_file matches
+		// LF strings against CRLF content.
+		line := strings.TrimSuffix(lines[i], "\r")
 		if len(line) > maxLineLen {
-			line = line[:maxLineLen] + " …[line truncated]"
+			cut := maxLineLen
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			line = line[:cut] + " …[line truncated]"
 		}
 		fmt.Fprintf(&b, "%6d\t%s\n", i+1, line)
 	}

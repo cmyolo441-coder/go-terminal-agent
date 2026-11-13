@@ -77,7 +77,7 @@ func (EditFile) Prepare(env *Env, raw json.RawMessage) (*Call, error) {
 		Summary:     "Edit " + env.Rel(abs),
 		Preview:     UnifiedDiff(env.Rel(abs), string(data), updated),
 		Path:        abs,
-		OutsideRoot: !env.Inside(abs),
+		OutsideRoot: env.Outside(abs),
 		run: func(ctx context.Context) (string, error) {
 			if err := writeAtomic(abs, []byte(updated)); err != nil {
 				return "", err
@@ -96,6 +96,14 @@ func applyEdit(content, oldS, newS string, all bool) (string, int, error) {
 		return newS, 1, nil
 	}
 	n := strings.Count(content, oldS)
+	if n == 0 && strings.Contains(content, "\r\n") && strings.Contains(oldS, "\n") && !strings.Contains(oldS, "\r") {
+		// The file uses CRLF line endings, but read_file output and the
+		// model's strings use LF. Match and replace in the file's style.
+		if crlf := toCRLF(oldS); strings.Count(content, crlf) > 0 {
+			oldS, newS = crlf, toCRLF(newS)
+			n = strings.Count(content, oldS)
+		}
+	}
 	switch {
 	case n == 0:
 		hint := ""
@@ -110,6 +118,11 @@ func applyEdit(content, oldS, newS string, all bool) (string, int, error) {
 		return strings.ReplaceAll(content, oldS, newS), n, nil
 	}
 	return strings.Replace(content, oldS, newS, 1), 1, nil
+}
+
+// toCRLF turns bare LF line endings into CRLF.
+func toCRLF(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
 }
 
 func plural(n int) string {

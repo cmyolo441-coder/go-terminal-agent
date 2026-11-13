@@ -64,7 +64,7 @@ func (WriteFile) Prepare(env *Env, raw json.RawMessage) (*Call, error) {
 		Summary:     fmt.Sprintf("%s %s", verb, env.Rel(abs)),
 		Preview:     UnifiedDiff(env.Rel(abs), string(old), content),
 		Path:        abs,
-		OutsideRoot: !env.Inside(abs),
+		OutsideRoot: env.Outside(abs),
 		run: func(ctx context.Context) (string, error) {
 			if err := writeAtomic(abs, []byte(content)); err != nil {
 				return "", err
@@ -80,7 +80,14 @@ func (WriteFile) Prepare(env *Env, raw json.RawMessage) (*Call, error) {
 }
 
 // writeAtomic writes via a temp file and rename, keeping the file mode.
+// A symlink is written through, to its target, rather than replaced by a
+// regular file (which would silently break the link).
 func writeAtomic(abs string, data []byte) error {
+	if st, err := os.Lstat(abs); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return err
 	}
