@@ -79,7 +79,20 @@ func runShell(ctx context.Context, env *Env, command string, timeout time.Durati
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
+	if env.Wrap != nil {
+		sh := ""
+		if runtime.GOOS != "windows" {
+			sh = "bash"
+			if _, err := exec.LookPath("bash"); err != nil {
+				sh = "sh"
+			}
+		}
+		argv, err := env.Wrap(sh, command)
+		if err != nil {
+			return "", fmt.Errorf("sandbox: %w", err)
+		}
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
+	} else if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
 	} else {
 		sh := "bash"

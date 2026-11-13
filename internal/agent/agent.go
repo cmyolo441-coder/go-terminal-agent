@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"strings"
 	"sync"
 
@@ -50,6 +51,12 @@ type Agent struct {
 	Env      *tools.Env
 	Gate     *permission.Gate
 	System   string
+	// Hooks runs user-configured commands around prompts and tool calls.
+	// Nil means no hooks.
+	Hooks *hooks.Runner
+	// BeforeWrite, when set, is called before any file-changing tool runs,
+	// for example to checkpoint the files it is about to touch.
+	BeforeWrite func(call *tools.Call)
 
 	mu       sync.Mutex
 	settings Settings
@@ -141,8 +148,23 @@ var ErrInterrupted = errors.New("interrupted")
 
 // Run sends a user message and drives the loop until the model finishes.
 func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
-	a.appendUser(user.Blocks)
+	blocks := user.Blocks
+	if a.Hooks.Has(hooks.UserPromptSubmit) {
+		res, err := a.Hooks.UserPromptSubmit(ctx, user.Text())
+		if err != nil {
+			return ErrInterrupted
+		}
+		a.hookNotices(res, sink)
+		if res.Blocked {
+			return fmt.Errorf("prompt blocked by a user_prompt_submit hook: %s", orDefault(res.Reason, "no reason given"))
+		}
+		if c := res.ContextText(); c != "" {
+			blocks = append(append([]llm.Block{}, blocks...), llm.Block{Type: llm.BlockText, Text: "<hook-context>\n" + c + "\n</hook-context>"})
+		}
+	}
+	a.appendUser(blocks)
 	s := a.Settings()
+	stopRetries := 0
 	for turn := 0; turn < s.MaxTurns; turn++ {
 		s = a.Settings()
 		req := llm.Request{
@@ -186,6 +208,21 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 		case len(uses) == 0:
 			if resp.StopReason == llm.StopMaxTokens {
 				sink.Notice("The reply hit the max_tokens limit. Say \"continue\" to resume, or raise max_tokens.")
+				return nil
+			}
+			if a.Hooks.Has(hooks.Stop) && stopRetries < maxStopRetries {
+				res, err := a.Hooks.Stop(ctx)
+				if err != nil {
+					return ErrInterrupted
+				}
+				a.hookNotices(res, sink)
+				if res.Blocked {
+					stopRetries++
+					reason := orDefault(res.Reason, "a stop hook asked you to keep working")
+					sink.Notice("Stop hook: " + reason)
+					a.appendUser([]llm.Block{{Type: llm.BlockText, Text: "<stop-hook>\n" + reason + "\n</stop-hook>"}})
+					continue
+				}
 			}
 			return nil
 		case resp.StopReason == llm.StopMaxTokens:
@@ -244,9 +281,25 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]ll
 			continue
 		}
 		p.call = call
+		hookApproved := false
+		if a.Hooks.Has(hooks.PreToolUse) {
+			res, err := a.Hooks.PreToolUse(ctx, u.ToolName, u.Input)
+			if err != nil {
+				fail("interrupted")
+				continue
+			}
+			a.hookNotices(res, sink)
+			if res.Blocked {
+				fail("blocked by a pre_tool_use hook: " + orDefault(res.Reason, "no reason given"))
+				continue
+			}
+			hookApproved = res.Approved
+		}
 		p.verdict, p.reason = a.Gate.Check(call)
 		if p.verdict == permission.Deny {
 			fail("not allowed: " + p.reason)
+		} else if p.verdict == permission.Ask && hookApproved && !permission.IsDestructive(call.Command) {
+			p.verdict = permission.Allow
 		}
 	}
 
@@ -306,6 +359,9 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]ll
 }
 
 func (a *Agent) execute(ctx context.Context, p *prepared, sink Sink) {
+	if p.call.Kind == tools.KindWrite && a.BeforeWrite != nil {
+		a.BeforeWrite(p.call)
+	}
 	sink.ToolStart(p.use.ToolUseID, p.call)
 	output, err := p.call.Run(ctx)
 	sink.ToolDone(p.use.ToolUseID, p.call, output, err)
@@ -316,10 +372,39 @@ func (a *Agent) execute(ctx context.Context, p *prepared, sink Sink) {
 		}
 		text += "Error: " + err.Error()
 	}
+	if a.Hooks.Has(hooks.PostToolUse) && ctx.Err() == nil {
+		if res, herr := a.Hooks.PostToolUse(ctx, p.use.ToolName, p.use.Input, output, err != nil); herr == nil {
+			a.hookNotices(res, sink)
+			if res.Reason != "" {
+				text = strings.TrimRight(text, "\n") + "\n\n<post-tool-hook>\n" + res.Reason + "\n</post-tool-hook>"
+			}
+		}
+	}
 	p.result = llm.Block{Type: llm.BlockToolResult, ToolUseID: p.use.ToolUseID, Text: text, IsError: err != nil}
 	p.done = true
 }
 
 func errorResult(id, msg string) llm.Block {
 	return llm.Block{Type: llm.BlockToolResult, ToolUseID: id, Text: msg, IsError: true}
+}
+
+// maxStopRetries caps how often a stop hook can send the model back to work
+// in one turn, so a broken hook cannot loop forever.
+const maxStopRetries = 3
+
+// hookNotices shows hook warnings and feedback to the user.
+func (a *Agent) hookNotices(res hooks.Result, sink Sink) {
+	for _, w := range res.Warnings {
+		sink.Notice("Hook warning: " + w)
+	}
+	for _, f := range res.Feedback {
+		sink.Notice("Hook: " + strings.TrimSpace(f))
+	}
+}
+
+func orDefault(s, def string) string {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	return s
 }

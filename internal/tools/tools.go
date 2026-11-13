@@ -78,6 +78,9 @@ type Env struct {
 	Root         string
 	ShellTimeout time.Duration
 	OutputLimit  int
+	// Wrap, when set, turns a shell command into the argv that runs it,
+	// for example inside a sandbox. An error means the command must not run.
+	Wrap func(shell, command string) ([]string, error)
 
 	mu       sync.Mutex
 	readMods map[string]time.Time
