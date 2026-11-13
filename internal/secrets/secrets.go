@@ -311,6 +311,13 @@ func (r *Redactor) Scan(text string) []Finding {
 		}
 		kept = append(kept, s)
 	}
+	// A secret found once (say, next to "password=") is redacted wherever
+	// else it appears, even where no rule would recognise it on its own.
+	kept = r.propagate(text, kept, free, func(s span) {
+		for i := s.start; i < s.end; i++ {
+			claimed[i>>6] |= 1 << (uint(i) & 63)
+		}
+	})
 	sort.Slice(kept, func(i, j int) bool { return kept[i].start < kept[j].start })
 	out := make([]Finding, 0, len(kept))
 	line, lineStart, pos := 1, 0, 0
@@ -337,6 +344,46 @@ func (r *Redactor) Scan(text string) []Finding {
 		})
 	}
 	return out
+}
+
+// maxPropagated bounds how many distinct secrets propagate searches the
+// whole text for, keeping Scan linear in practice on inputs with many
+// findings.
+const maxPropagated = 256
+
+// minPropagateLen is the shortest secret propagate looks for elsewhere: a
+// short password such as the "x" in http://u:x@h must not redact every x.
+const minPropagateLen = 8
+
+// propagate adds a span for every other occurrence of each kept secret
+// that is not already claimed, so the secret does not survive elsewhere in
+// the redacted text.
+func (r *Redactor) propagate(text string, kept []span, free func(span) bool, claim func(span)) []span {
+	seen := map[string]bool{}
+	n := len(kept)
+	for k := 0; k < n && len(seen) < maxPropagated; k++ {
+		s := kept[k]
+		secret := text[s.start:s.end]
+		if len(secret) < minPropagateLen || seen[secret] {
+			continue
+		}
+		seen[secret] = true
+		for from := 0; from < len(text); {
+			i := strings.Index(text[from:], secret)
+			if i < 0 {
+				break
+			}
+			o := span{start: from + i, end: from + i + len(secret), rule: s.rule, priority: s.priority}
+			if free(o) {
+				claim(o)
+				kept = append(kept, o)
+				from = o.end
+			} else {
+				from = o.start + 1
+			}
+		}
+	}
+	return kept
 }
 
 const (

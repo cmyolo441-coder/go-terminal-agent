@@ -563,6 +563,24 @@ func BenchmarkRedactSecrets1MB(b *testing.B) {
 	}
 }
 
+// A secret found once is redacted wherever else it appears, even where no
+// rule would recognise it on its own; short secrets do not spread.
+func TestFoundSecretIsRedactedEverywhere(t *testing.T) {
+	r := newTest(t, Options{})
+	in := "DB_PASSWORD=s3cr3tValue1\nconnecting with s3cr3tValue1 now"
+	out, fs := r.Redact(in)
+	if strings.Contains(out, "s3cr3tValue1") || len(fs) != 2 || fs[0].Placeholder != fs[1].Placeholder {
+		t.Fatalf("second occurrence leaked: %q %v", out, fs)
+	}
+	if fs[1].Line != 2 {
+		t.Fatalf("propagated finding has the wrong line: %+v", fs[1])
+	}
+	out, _ = r.Redact("postgres://u:xy@db/x and xy elsewhere")
+	if !strings.Contains(out, "xy elsewhere") {
+		t.Fatalf("a short secret spread to unrelated text: %q", out)
+	}
+}
+
 func BenchmarkRedactRandom1MB(b *testing.B) {
 	// Worst case for the entropy check: one long run of base64 lines.
 	r := newTest(b, Options{})

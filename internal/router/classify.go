@@ -52,7 +52,7 @@ var kindNames = [...]string{
 
 // String returns a stable snake_case name, suitable as a metric attribute.
 func (k Kind) String() string {
-	if int(k) < len(kindNames) {
+	if k >= 0 && int(k) < len(kindNames) {
 		return kindNames[k]
 	}
 	return "kind(" + strconv.Itoa(int(k)) + ")"
@@ -334,15 +334,19 @@ func permanentTransport(err error) bool {
 	return false
 }
 
+// maxRetryAfter caps a server-requested wait. Larger values, and values
+// that do not fit a time.Duration (1e300, Inf), are clamped to it.
+const maxRetryAfter = 24 * time.Hour
+
 // parseRetryAfter reads retry-after-ms or Retry-After (seconds or an HTTP
-// date).
+// date). The result is never negative and never above maxRetryAfter.
 func parseRetryAfter(h http.Header, now time.Time) time.Duration {
 	if h == nil {
 		return 0
 	}
 	if v := strings.TrimSpace(h.Get("Retry-After-Ms")); v != "" {
 		if ms, err := strconv.ParseFloat(v, 64); err == nil && ms > 0 {
-			return time.Duration(ms * float64(time.Millisecond))
+			return clampWait(ms / 1000)
 		}
 	}
 	v := strings.TrimSpace(h.Get("Retry-After"))
@@ -350,15 +354,25 @@ func parseRetryAfter(h http.Header, now time.Time) time.Duration {
 		return 0
 	}
 	if secs, err := strconv.ParseFloat(v, 64); err == nil {
-		if secs <= 0 {
-			return 0
-		}
-		return time.Duration(secs * float64(time.Second))
+		return clampWait(secs)
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := t.Sub(now); d > 0 {
-			return d
+			return min(d, maxRetryAfter)
 		}
 	}
 	return 0
+}
+
+// clampWait converts seconds to a duration in [0, maxRetryAfter]. NaN and
+// non-positive values are 0; converting an out-of-range float to a
+// Duration directly would give an arbitrary, often negative, value.
+func clampWait(secs float64) time.Duration {
+	if !(secs > 0) {
+		return 0
+	}
+	if secs >= maxRetryAfter.Seconds() {
+		return maxRetryAfter
+	}
+	return time.Duration(secs * float64(time.Second))
 }
