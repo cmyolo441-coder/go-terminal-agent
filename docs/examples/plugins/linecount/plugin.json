@@ -1,0 +1,38 @@
+{
+  "name": "linecount",
+  "version": "1.0.0",
+  "description": "Count lines in workspace files, plus two example slash commands",
+  "env": { "LINECOUNT_DIR": "${PLUGIN_DIR}" },
+  "tools": [
+    {
+      "name": "count_lines",
+      "description": "Count the lines of one file in the workspace. Give a path relative to the workspace root.",
+      "kind": "read",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File path relative to the workspace root", "minLength": 1 }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      },
+      "command": "./bin/count-lines.sh",
+      "timeout_sec": 10,
+      "max_output_bytes": 4096
+    }
+  ],
+  "commands": [
+    {
+      "name": "explain",
+      "description": "Ask the model to explain a file",
+      "argument_hint": "<file> [focus]",
+      "prompt": "Explain what {{1}} does. Read it first with read_file. Focus on: {{args}}"
+    },
+    {
+      "name": "today",
+      "description": "Show the date and the current git branch",
+      "command": "./bin/today.sh",
+      "timeout_sec": 10
+    }
+  ]
+}
