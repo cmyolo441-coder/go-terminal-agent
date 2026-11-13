@@ -27,6 +27,10 @@ type Session struct {
 	Usage    llm.Usage     `json:"usage"`
 	CostUSD  float64       `json:"cost_usd"`
 	Messages []llm.Message `json:"messages"`
+
+	// enc remembers how each message was last encoded, so saving a long
+	// conversation after a new turn only encodes the new messages.
+	enc *encodeCache
 }
 
 // Store reads and writes sessions in a directory.
@@ -61,7 +65,10 @@ func (s *Store) Save(sess *Session) error {
 	if sess.Title == "" {
 		sess.Title = titleFrom(sess.Messages)
 	}
-	data, err := json.Marshal(sess)
+	if sess.enc == nil {
+		sess.enc = &encodeCache{}
+	}
+	data, err := sess.enc.marshal(sess)
 	if err != nil {
 		return err
 	}
