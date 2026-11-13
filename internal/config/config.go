@@ -4,13 +4,16 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/cmyolo441-coder/go-terminal-agent/internal/lsp"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/lsp"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/budget"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
@@ -112,6 +115,9 @@ type Config struct {
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
 	IgnoredProjectHooks bool `json:"-"`
+	// IgnoredProjectSettings names settings from an untrusted project file
+	// that Load reverted to the user's values (see restrictUntrusted).
+	IgnoredProjectSettings []string `json:"-"`
 }
 
 // FallbackModel is one entry of fallback_models.
@@ -215,10 +221,20 @@ func Load(root string) (Config, error) {
 	}
 	userHooks, trust := cfg.Hooks, cfg.TrustProjectHooks
 	userMCP := cfg.MCPServers
+	// Decoding the project file reuses the user's slices and maps, so keep
+	// deep copies of what restrictUntrusted may need to restore.
+	user := cfg
+	cloneJSON(&user.AllowCommands, cfg.AllowCommands)
+	cloneJSON(&user.SecretsAllow, cfg.SecretsAllow)
+	cloneJSON(&user.LSPServers, cfg.LSPServers)
+	cloneJSON(&user.Telemetry, cfg.Telemetry)
 	cfg.Hooks = nil
 	cfg.MCPServers = nil
 	if err := mergeFile(&cfg, ProjectFile(root)); err != nil {
 		return cfg, err
+	}
+	if !trust {
+		cfg.IgnoredProjectSettings = restrictUntrusted(&cfg, &user)
 	}
 	// The project file may not grant itself trust or replace user hooks.
 	projectHooks := cfg.Hooks
@@ -247,6 +263,69 @@ func Load(root string) (Config, error) {
 	return cfg, cfg.Validate()
 }
 
+// restrictUntrusted undoes the settings an untrusted project file may not
+// change, because a cloned repository could use them to run programs
+// (lsp_servers, allow_commands), to send the API key or the conversation
+// elsewhere (base_url, telemetry), to hide what happened (audit) or to
+// lift the user's safeguards (yolo mode, a weaker sandbox, network in the
+// sandbox, secret redaction, the budget). A project may still tighten
+// them. It returns the names of the settings it reverted.
+func restrictUntrusted(cfg, user *Config) []string {
+	var ignored []string
+	revert := func(name string, changed bool, undo func()) {
+		if changed {
+			undo()
+			ignored = append(ignored, name)
+		}
+	}
+	revert("base_url", cfg.BaseURL != user.BaseURL, func() { cfg.BaseURL = user.BaseURL })
+	revert("lsp_servers", !sameJSON(cfg.LSPServers, user.LSPServers), func() { cfg.LSPServers = user.LSPServers })
+	revert("allow_commands", !sameJSON(cfg.AllowCommands, user.AllowCommands), func() { cfg.AllowCommands = user.AllowCommands })
+	revert("telemetry", !sameJSON(cfg.Telemetry, user.Telemetry), func() { cfg.Telemetry = user.Telemetry })
+	revert("audit_log", user.AuditLog && !cfg.AuditLog, func() { cfg.AuditLog = true })
+	revert("audit_dir", cfg.AuditDir != user.AuditDir, func() { cfg.AuditDir = user.AuditDir })
+	revert("audit_sync", cfg.AuditSync != user.AuditSync, func() { cfg.AuditSync = user.AuditSync })
+	revert("redact_secrets", user.RedactSecrets && !cfg.RedactSecrets, func() { cfg.RedactSecrets = true })
+	revert("secrets_allow", !sameJSON(cfg.SecretsAllow, user.SecretsAllow), func() { cfg.SecretsAllow = user.SecretsAllow })
+	revert("permission_mode", cfg.PermissionMode == "yolo" && user.PermissionMode != "yolo", func() { cfg.PermissionMode = user.PermissionMode })
+	revert("sandbox", sandboxRank(cfg.Sandbox) < sandboxRank(user.Sandbox), func() { cfg.Sandbox = user.Sandbox })
+	revert("sandbox_network", cfg.SandboxNetwork && !user.SandboxNetwork, func() { cfg.SandboxNetwork = false })
+	tight := user.Budget.Tighten(cfg.Budget)
+	revert("budget", tight != cfg.Budget, func() { cfg.Budget = tight })
+	return ignored
+}
+
+// cloneJSON deep-copies src into dst through JSON.
+func cloneJSON[T any](dst *T, src T) {
+	var zero T
+	*dst = zero
+	if b, err := json.Marshal(src); err == nil {
+		_ = json.Unmarshal(b, dst)
+	}
+}
+
+// sameJSON reports whether a and b encode to the same JSON.
+func sameJSON(a, b any) bool {
+	ja, erra := json.Marshal(a)
+	jb, errb := json.Marshal(b)
+	return erra == nil && errb == nil && bytes.Equal(ja, jb)
+}
+
+// sandboxRank orders sandbox modes from weakest to strictest; an invalid
+// mode ranks lowest so it is never accepted as a tightening.
+func sandboxRank(s string) int {
+	m, err := sandbox.ParseMode(s)
+	if err != nil {
+		return -1
+	}
+	for i, x := range sandbox.Modes {
+		if x == m {
+			return i
+		}
+	}
+	return -1
+}
+
 func mergeFile(cfg *Config, path string) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -255,11 +334,23 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return err
 	}
-	// Decoding onto the existing struct overrides only the keys present.
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	if err := decodeInto(cfg, data); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+// decodeInto decodes a config file onto cfg, overriding only the keys
+// present. Unknown keys and anything after the JSON object are errors, so
+// a typo or a botched merge is reported instead of silently ignored.
+func decodeInto(cfg *Config, data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("unexpected data after the JSON object")
 	}
 	return nil
 }
