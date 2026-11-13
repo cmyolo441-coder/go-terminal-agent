@@ -850,9 +850,19 @@ func (s *Server) buildMessage(ss *session, req MessageRequest) (llm.Message, err
 			if in.Data != "" {
 				return llm.Message{}, fmt.Errorf("image %d: give either data or path, not both", i+1)
 			}
-			p := in.Path
+			p, root := in.Path, ""
 			if ss.agent.Env != nil {
-				p = ss.agent.Env.Resolve(p)
+				p, root = ss.agent.Env.Resolve(p), ss.agent.Env.Root
+			}
+			// Reading the file is a read like read_file: the managed
+			// policy's path rules apply.
+			if g := ss.agent.Gov; g != nil && g.Policy.Active() {
+				if d := g.Policy.CheckPath(p, root, false); !d.Allowed {
+					if g.Audit != nil {
+						_ = g.Audit.Log(d.Record("image"))
+					}
+					return llm.Message{}, fmt.Errorf("image %d: %s", i+1, d.UserText())
+				}
 			}
 			img = llm.Image{Path: p}
 		}

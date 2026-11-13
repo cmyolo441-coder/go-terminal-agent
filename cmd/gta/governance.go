@@ -28,8 +28,10 @@ type governance struct {
 	logger   *audit.FileLogger
 	auditDir string
 	// hmacKey is the policy's audit HMAC key, for /audit verify.
-	hmacKey  []byte
-	warnings []string
+	hmacKey []byte
+	// budgetOpts builds a budget tracker; gta serve makes one per session.
+	budgetOpts budget.Options
+	warnings   []string
 }
 
 // loadPolicy reads the managed policy and clamps cfg to it. Violations it
@@ -84,11 +86,12 @@ func (g *governance) build(cfg config.Config, root, sessionID string) error {
 		gov.Redactor = r
 	}
 
-	tr, err := budget.New(budget.Options{
+	g.budgetOpts = budget.Options{
 		Limits:        cfg.Budget,
 		Path:          filepath.Join(config.UserDir(), budget.LedgerFile),
 		BlockUnpriced: g.policy.Budget().Active(),
-	})
+	}
+	tr, err := budget.New(g.budgetOpts)
 	if err != nil {
 		g.warnings = append(g.warnings, "budget tracking off: "+err.Error())
 	} else {
@@ -176,6 +179,23 @@ func (g *governance) checkCommand(root string) func(string) error {
 func (g *governance) guardEnv(env *tools.Env) {
 	env.Hidden = g.hidden(env.Root)
 	env.CheckCommand = g.checkCommand(env.Root)
+}
+
+// sessionGov returns governance for one gta serve session: the shared
+// policy, audit log and redactor, with its own budget tracker so that
+// session_usd caps each API session. Daily and monthly spend still go
+// through the shared ledger file.
+func (g *governance) sessionGov() *agent.Governance {
+	if g.gov == nil {
+		return nil
+	}
+	s := &agent.Governance{Policy: g.gov.Policy, Audit: g.gov.Audit, AuditRequired: g.gov.AuditRequired, Redactor: g.gov.Redactor, Budget: g.gov.Budget, ProviderName: g.gov.ProviderName}
+	if g.gov.Budget != nil {
+		if tr, err := budget.New(g.budgetOpts); err == nil {
+			s.Budget = tr
+		}
+	}
+	return s
 }
 
 // attach installs governance on ag, including the policy's mode limit.

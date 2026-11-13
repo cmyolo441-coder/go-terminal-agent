@@ -204,7 +204,8 @@ files are left out of their results, and to the code index, so denied
 files are never indexed and cannot appear in `code_search`, `symbols`,
 `repo_map` or the repository map in the system prompt. A denied directory
 is skipped as a whole. Without read rules these per-file checks are not
-installed and cost nothing.
+installed and cost nothing. Image `path` inputs to `gta serve` are checked
+as reads too.
 
 ### Examples
 
@@ -383,8 +384,8 @@ redaction is audited as `secrets_redacted`.
   `warn_at` of a cap, or when the call could cost more than what is left,
   a warning is shown.
 - A cap stops the *next* call; one call can finish past the cap.
-- In `gta serve`, `session_usd` covers the whole server process, not one
-  API session.
+- In `gta serve`, `session_usd` caps each API session; daily and monthly
+  caps cover all sessions (and all GTA processes) through the ledger.
 - `/budget` and `/cost` show the numbers.
 
 ## API server
@@ -452,4 +453,4 @@ GTA assumes the person running it is trusted, and protects them from:
   a scrubbed (plugins) or full (hooks, MCP) environment.
 - **Approvals in `gta serve`** come from whoever holds the token; anyone
   who can read the token file can drive the agent. Image `path` inputs in
-  API messages are read from the server's disk without policy path checks.
+  API messages are read from the server's disk (policy path rules apply).

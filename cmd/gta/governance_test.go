@@ -9,11 +9,38 @@ import (
 	"testing"
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/audit"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/budget"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/codeintel"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 	orgpolicy "github.com/cmyolo441-coder/go-terminal-agent/internal/policy"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 )
+
+// In gta serve each API session gets its own session_usd cap.
+func TestServeSessionBudgetIsPerSession(t *testing.T) {
+	cfg := config.Default()
+	cfg.AuditLog, cfg.AuditDir = true, t.TempDir()
+	cfg.Budget = budget.Limits{SessionUSD: 1}
+	g := testGovernance(t, nil, cfg)
+	defer g.close()
+	a, b := g.sessionGov(), g.sessionGov()
+	if a.Budget == nil || b.Budget == nil || a.Budget == b.Budget || a.Budget == g.gov.Budget {
+		t.Fatal("sessions share a budget tracker")
+	}
+	if a.Audit != g.gov.Audit || a.Policy != g.gov.Policy {
+		t.Fatal("sessions must share the audit log and policy")
+	}
+	if _, err := a.Budget.Record(config.DefaultModel, llm.Usage{InputTokens: 2_000_000, OutputTokens: 1_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	if d := a.Budget.Check(config.DefaultModel, 0, 0); d.Verdict != budget.Block {
+		t.Fatalf("spent session not blocked: %+v", d)
+	}
+	if d := b.Budget.Check(config.DefaultModel, 0, 0); d.Verdict == budget.Block {
+		t.Fatalf("another session blocked by the first one's spend: %+v", d)
+	}
+}
 
 // Policy path rules reach the directory-walking tools and the code index,
 // and command rules reach test commands run outside the bash tool.

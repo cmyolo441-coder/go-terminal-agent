@@ -174,6 +174,7 @@ func runServe(args []string) error {
 		}
 		ag.Hooks = hk
 		gv.attach(ag)
+		ag.Gov = gv.sessionGov() // session_usd caps each API session
 		ci.attach(ag)
 		ag.Tel = tel
 		ts.ag = ag

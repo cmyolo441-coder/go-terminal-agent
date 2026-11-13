@@ -175,7 +175,7 @@ Body empty or `{}`.
 | Field | Description |
 | --- | --- |
 | `text` | The prompt. `text` or `images` is required. |
-| `images` | Up to 20. Either `data` (base64) with `media_type`, or `path` on the server's machine (relative to the workspace). PNG, JPEG, GIF or WebP, at most 3.75 MiB and 8000 px per side. |
+| `images` | Up to 20. Either `data` (base64) with `media_type`, or `path` on the server's machine (relative to the workspace; a path the managed policy denies reading is refused with `bad_request`). PNG, JPEG, GIF or WebP, at most 3.75 MiB and 8000 px per side. |
 
 One turn per session at a time (409 otherwise). The response is
 `200 text/event-stream`. Disconnecting interrupts the turn.
