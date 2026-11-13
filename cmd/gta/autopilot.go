@@ -44,7 +44,7 @@ func runPlan(ctx context.Context, ag *agent.Agent, cfg config.Config, root, task
 		ReviewerModel: cfg.SubagentModel,
 		Instructions:  prompt.Memory(root),
 		VerifyTests:   true,
-		Setup:         func(a *agent.Agent) { a.Gov = ag.Gov.Child() },
+		Setup:         func(a *agent.Agent) { a.Gov, a.AfterWrite = ag.Gov.Child(), ag.AfterWrite },
 		Approve: func(ctx context.Context, req autopilot.ApprovalRequest) (autopilot.Approval, error) {
 			preview := req.Plan.Markdown()
 			if len(req.Unresolved) > 0 {

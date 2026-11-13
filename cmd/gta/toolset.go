@@ -34,10 +34,12 @@ type toolset struct {
 	notes []string // startup notes for the user
 }
 
-// newToolset builds the core and plugin tools for cfg.
-func newToolset(cfg config.Config, root string) *toolset {
+// newToolset builds the core and plugin tools for cfg. extra are more
+// built-in tools, such as the code index and LSP tools.
+func newToolset(cfg config.Config, root string, extra ...tools.Tool) *toolset {
 	ts := &toolset{}
 	ts.core = append(tools.Default().All(), autopilot.NewVerifyTool(autopilot.VerifyToolConfig{}))
+	ts.core = append(ts.core, extra...)
 	if webClientSide(cfg) {
 		opts := webtools.Options{}
 		if os.Getenv("HTTPS_PROXY") != "" || os.Getenv("https_proxy") != "" {
@@ -141,6 +143,6 @@ func reservedCommands() []string {
 		"help", "status", "clear", "new", "reset", "model", "effort", "mode", "thinking", "cost", "usage",
 		"tasks", "todos", "compact", "sessions", "resume", "init", "memory", "tools", "config", "exit", "quit", "q",
 		"diff", "commit", "log", "undo", "checkpoints", "worktree", "sandbox", "hooks", "mcp", "provider", "plugins",
-		"plan", "fixtests", "index", "audit", "budget", "policy",
+		"plan", "fixtests", "index", "lsp", "audit", "budget", "policy",
 	}
 }

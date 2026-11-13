@@ -6,6 +6,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/lsp"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +93,19 @@ type Config struct {
 	// Telemetry exports OpenTelemetry traces and metrics.
 	Telemetry telemetry.Config `json:"telemetry"`
 
+	// CodeIndex builds a local index of the workspace for the code_search,
+	// symbols and repo_map tools. RepoMapBudget is the size in tokens of
+	// the repository map added to the system prompt (0 leaves it out).
+	CodeIndex            bool     `json:"code_index"`
+	CodeIndexMaxFileSize int64    `json:"code_index_max_file_size,omitempty"`
+	CodeIndexIgnore      []string `json:"code_index_ignore,omitempty"`
+	RepoMapBudget        int      `json:"repo_map_budget"`
+	// LSP runs language servers (gopls, pyright, …) that are installed, to
+	// report compiler errors after every edit and power code_nav.
+	LSP                  bool               `json:"lsp"`
+	LSPServers           []lsp.ServerConfig `json:"lsp_servers,omitempty"`
+	LSPDiagnosticsWaitMs int                `json:"lsp_diagnostics_wait_ms,omitempty"`
+
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
 	IgnoredProjectHooks bool `json:"-"`
@@ -140,6 +154,9 @@ func Default() Config {
 		Sandbox:      "off",
 
 		RedactSecrets: true,
+		CodeIndex:     true,
+		RepoMapBudget: 1500,
+		LSP:           true,
 	}
 }
 
@@ -275,6 +292,14 @@ func (c Config) Validate() error {
 	}
 	if err := c.Budget.Validate(); err != nil {
 		return fmt.Errorf("config: budget: %w", err)
+	}
+	if c.RepoMapBudget < 0 || c.CodeIndexMaxFileSize < 0 || c.LSPDiagnosticsWaitMs < 0 {
+		return fmt.Errorf("config: repo_map_budget, code_index_max_file_size and lsp_diagnostics_wait_ms cannot be negative")
+	}
+	for i, s := range c.LSPServers {
+		if strings.TrimSpace(s.Name) == "" {
+			return fmt.Errorf("config: lsp_servers[%d]: name is empty", i)
+		}
 	}
 	switch c.AuditSync {
 	case "", "always", "interval", "never":

@@ -144,7 +144,7 @@ func addTaskTool(ag *agent.Agent, cfg config.Config, root string, ts *toolset) {
 				}
 			},
 			OnUsage: ag.AddUsage,
-			Setup:   func(child *agent.Agent) { child.Gov = ag.Gov.Child() },
+			Setup:   func(child *agent.Agent) { child.Gov, child.AfterWrite = ag.Gov.Child(), ag.AfterWrite },
 		})}
 	}
 	ts.rebuild()

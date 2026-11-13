@@ -68,6 +68,11 @@ type Agent struct {
 	// BeforeWrite, when set, is called before any file-changing tool runs,
 	// for example to checkpoint the files it is about to touch.
 	BeforeWrite func(call *tools.Call)
+	// AfterWrite, when set, is called after a file-changing tool succeeds,
+	// for example to refresh a code index and collect compiler
+	// diagnostics. Text it returns is added to the tool result the model
+	// sees.
+	AfterWrite func(ctx context.Context, call *tools.Call) string
 	// BeforeTurn, when set, is called with the user's text at the start of
 	// every Run, for example to open a new checkpoint.
 	BeforeTurn func(prompt string)
@@ -540,6 +545,11 @@ func (a *Agent) execute(ctx context.Context, p *prepared, sink Sink) {
 			text = strings.TrimRight(text, "\n") + "\n"
 		}
 		text += "Error: " + err.Error()
+	}
+	if err == nil && p.call.Kind == tools.KindWrite && a.AfterWrite != nil && ctx.Err() == nil {
+		if extra := strings.TrimSpace(a.AfterWrite(ctx, p.call)); extra != "" {
+			text = strings.TrimRight(text, "\n") + "\n\n" + extra
+		}
 	}
 	if a.Hooks.Has(hooks.PostToolUse) && ctx.Err() == nil {
 		if res, herr := a.Hooks.PostToolUse(ctx, p.use.ToolName, p.use.Input, output, err != nil); herr == nil {

@@ -109,13 +109,21 @@ func runServe(args []string) error {
 		return err
 	}
 
-	shared := newToolset(cfg, root)
+	ci := startCodeIntel(cfg, root)
+	defer ci.close()
+	shared := newToolset(cfg, root, ci.tools()...)
 	for _, n := range shared.notes {
 		fmt.Fprintln(os.Stderr, "gta:", n)
 	}
 	var started atomic.Bool
 	started.Store(true) // MCP messages go to stderr; there is no UI sink.
 	system := prompt.Build(root)
+	if m := ci.systemPrompt(); m != "" {
+		system += "\n\n" + m
+	}
+	for _, n := range ci.notes {
+		fmt.Fprintln(os.Stderr, "gta:", n)
+	}
 
 	var mcpProbe *agent.Agent
 	factory := func(ctx context.Context, o server.SessionOptions) (*agent.Agent, error) {
@@ -159,6 +167,7 @@ func runServe(args []string) error {
 		}
 		ag.Hooks = hk
 		gv.attach(ag)
+		ci.attach(ag)
 		ag.Tel = tel
 		ts.ag = ag
 		addTaskTool(ag, c, root, ts)

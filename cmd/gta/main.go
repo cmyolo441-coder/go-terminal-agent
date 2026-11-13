@@ -189,6 +189,15 @@ func run(args []string) error {
 		return err
 	}
 	system := prompt.Build(root)
+	ci := startCodeIntel(cfg, root)
+	defer ci.close()
+	if m := ci.systemPrompt(); m != "" {
+		system += "\n\n" + m
+	}
+	for _, n := range ci.notes {
+		fmt.Fprintln(os.Stderr, "gta:", n)
+	}
+	ci.warm(root)
 	if extra, warns := sessionStartContext(hookRunner); extra != "" || len(warns) > 0 {
 		for _, w := range warns {
 			fmt.Fprintln(os.Stderr, "gta: hook warning:", w)
@@ -201,7 +210,7 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "gta: ignoring hooks in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")
 	}
 
-	ts := newToolset(cfg, root)
+	ts := newToolset(cfg, root, ci.tools()...)
 	for _, n := range ts.notes {
 		fmt.Fprintln(os.Stderr, "gta:", n)
 	}
@@ -214,6 +223,7 @@ func run(args []string) error {
 	})
 	ag.Hooks = hookRunner
 	gv.attach(ag)
+	ci.attach(ag)
 	ag.Tel, ag.SessionID = tel, sess.ID
 	rt.setNotify(func(msg string) {
 		if s := ag.ActiveSink(); s != nil {
@@ -235,8 +245,9 @@ func run(args []string) error {
 	registerPluginCommands(ts)
 	registerGovernanceCommands(gv)
 	registerAutopilotCommands(ag, cfg, root)
+	registerCodeCommands(ci)
 	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts, gv: gv}
-	caps.extra = append(caps.extra, rt.capabilities)
+	caps.extra = append(caps.extra, rt.capabilities, ci.capabilities)
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}
