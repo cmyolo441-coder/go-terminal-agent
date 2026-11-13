@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -281,6 +282,26 @@ func TestStdioStartFailures(t *testing.T) {
 	_, err = Connect(context.Background(), "fake", stdioConfig("old_version", nil), testClientOptions(t))
 	if err == nil || !strings.Contains(err.Error(), "unsupported protocol version") {
 		t.Fatalf("old_version err = %v", err)
+	}
+}
+
+// A server that exits before reading its input makes the first write fail
+// with EPIPE, possibly before the transport has noticed the exit. The
+// error must still be the exit status and stderr, not "broken pipe". A
+// grandchild holding stdout open widens that window to the grace period,
+// which makes the old race (seen as a flaky
+// TestManagerStartsServersIndependently) deterministic.
+func TestStdioEarlyExitReportsStderrNotBrokenPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell")
+	}
+	script := `(sleep 3 <&- 2>/dev/null &); exec 0<&-; echo 'cannot start: missing token' >&2; exit 1`
+	cfg := ServerConfig{Command: "sh", Args: []string{"-c", script}, TimeoutSec: 10}
+	opts := testClientOptions(t)
+	opts.shutdownGrace = 500 * time.Millisecond
+	_, err := Connect(context.Background(), "fake", cfg, opts)
+	if err == nil || !strings.Contains(err.Error(), "missing token") || strings.Contains(err.Error(), "broken pipe") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

@@ -387,8 +387,10 @@ func (t *httpTransport) readStream(ctx context.Context, body io.Reader, wantID s
 				lastID = string(value)
 			}
 		case "retry":
+			// Clamp before converting: a huge value would overflow to a
+			// negative duration. Callers cap the wait anyway.
 			if ms, perr := strconv.Atoi(string(value)); perr == nil && ms >= 0 {
-				retry = time.Duration(ms) * time.Millisecond
+				retry = time.Duration(min(ms, int(listenMaxBackoff/time.Millisecond))) * time.Millisecond
 			}
 		}
 		if ctx.Err() != nil {

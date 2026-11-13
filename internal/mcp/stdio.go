@@ -208,6 +208,21 @@ func (t *stdioTransport) send(ctx context.Context, msg []byte) error {
 	select {
 	case err := <-written:
 		if err != nil {
+			// A failed write (EPIPE) means the server closed its input,
+			// almost always because it exited. That can happen before
+			// supervise has recorded the exit, so wait for it: the exit
+			// status and stderr explain the failure, "broken pipe" does
+			// not.
+			wait := time.NewTimer(2*t.grace + time.Second)
+			defer wait.Stop()
+			select {
+			case <-t.doneCh:
+				if terr := t.err(); terr != nil {
+					return terr
+				}
+			case <-ctx.Done():
+			case <-wait.C:
+			}
 			return fmt.Errorf("mcp: write to server: %w", err)
 		}
 		return nil
