@@ -13,7 +13,8 @@ outcomes and error types.
 Telemetry starts when either is true:
 
 - `telemetry.enabled` is `true` in a config file, or
-- `OTEL_EXPORTER_OTLP_ENDPOINT` is set in the environment.
+- `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is set in the environment.
 
 `OTEL_SDK_DISABLED=true` always turns it off. So does `"exporter": "none"`.
 
@@ -66,7 +67,7 @@ Config fields win over these when both are set.
 | --- | --- |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL; also turns telemetry on. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Full per-signal URLs. They do **not** turn telemetry on by themselves (see below). |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Full per-signal URLs; either also turns telemetry on. |
 | `OTEL_EXPORTER_OTLP_HEADERS`, `…_TRACES_HEADERS`, `…_METRICS_HEADERS` | `key=value,key2=value2`. |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Milliseconds. |
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` or `none`. |
@@ -79,11 +80,6 @@ Config fields win over these when both are set.
 | `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_METRIC_EXPORT_TIMEOUT` | Milliseconds. |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | Exemplar filter. |
 | `OTEL_ATTRIBUTE_COUNT_LIMIT`, `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_EVENT_COUNT_LIMIT`, `OTEL_SPAN_LINK_COUNT_LIMIT`, `OTEL_EVENT_ATTRIBUTE_COUNT_LIMIT`, `OTEL_LINK_ATTRIBUTE_COUNT_LIMIT` | Span limits. |
-
-Note: the telemetry library treats the per-signal endpoint variables as
-"on", but the `gta` binary only checks `OTEL_EXPORTER_OTLP_ENDPOINT` (or
-`telemetry.enabled`) before starting it. If you only set a per-signal
-endpoint, also set `"enabled": true`.
 
 ## File exporter
 

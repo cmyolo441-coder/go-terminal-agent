@@ -29,7 +29,7 @@ type routing struct {
 
 // startTelemetry builds the telemetry pipeline from the config.
 func startTelemetry(cfg config.Config) (*telemetry.Telemetry, error) {
-	if !cfg.Telemetry.Enabled && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+	if !cfg.Telemetry.Enabled && !telemetry.EnvEndpointSet() {
 		return nil, nil
 	}
 	c := cfg.Telemetry

@@ -136,6 +136,18 @@ func envTrue(name string) bool {
 	return b
 }
 
+// EnvEndpointSet reports whether an OTLP endpoint is set in the
+// environment (OTEL_EXPORTER_OTLP_ENDPOINT or its traces or metrics
+// variant), which turns telemetry on without "enabled" in the config.
+func EnvEndpointSet() bool {
+	for _, k := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"} {
+		if os.Getenv(k) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // New builds the pipeline described by cfg and the OTEL_* environment.
 // Recoverable problems with environment variables (malformed lists, an
 // unsupported protocol) do not fail New; Warnings reports them.
@@ -143,9 +155,7 @@ func New(cfg Config) (*Telemetry, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	envEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" ||
-		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" ||
-		os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") != ""
+	envEndpoint := EnvEndpointSet()
 	if envTrue("OTEL_SDK_DISABLED") || !(cfg.Enabled || envEndpoint) {
 		return Disabled(), nil
 	}
