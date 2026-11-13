@@ -249,7 +249,10 @@ func cmdMode(m *model, arg string) tea.Cmd {
 		m.emit(renderError(err.Error()))
 		return nil
 	}
-	m.ag.Gate.SetMode(mode)
+	mode, why := m.ag.Gate.Switch(mode)
+	if why != "" {
+		m.emit(renderError(why))
+	}
 	m.emit(renderInfo("Mode set to " + string(mode) + " · " + modeHelp(mode)))
 	return nil
 }

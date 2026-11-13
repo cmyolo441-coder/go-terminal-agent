@@ -309,8 +309,7 @@ func (m *model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "shift+tab":
-		mode := m.ag.Gate.Mode().Next()
-		m.ag.Gate.SetMode(mode)
+		mode := m.ag.Gate.Cycle()
 		m.flash("Permission mode: " + string(mode) + " · " + modeHelp(mode))
 		return m, nil
 	case "tab":

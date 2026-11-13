@@ -128,6 +128,9 @@ type Config struct {
 	// with the model that served it, so the parent can bill it. Calls are
 	// serialized with Progress.
 	OnUsage func(model string, u llm.Usage)
+	// Setup, when set, adjusts each child agent after it is built, for
+	// example to give it the parent's governance.
+	Setup func(child *agent.Agent)
 }
 
 // Tool is the "task" tool. It is safe for concurrent use.

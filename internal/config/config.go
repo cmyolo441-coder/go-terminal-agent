@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/budget"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/mcp"
@@ -69,6 +70,19 @@ type Config struct {
 	// BRAVE_API_KEY, TAVILY_API_KEY or SEARXNG_URL.
 	ClientWebTools bool `json:"client_web_tools"`
 
+	// Budget caps spend per session, day and month (USD). A managed
+	// policy can only tighten it.
+	Budget budget.Limits `json:"budget"`
+	// AuditLog writes a tamper-evident log of tool calls, approvals and
+	// model calls to AuditDir (default <config dir>/audit).
+	AuditLog  bool   `json:"audit_log"`
+	AuditDir  string `json:"audit_dir,omitempty"`
+	AuditSync string `json:"audit_sync,omitempty"`
+	// RedactSecrets replaces API keys, tokens and passwords in everything
+	// sent to the model. SecretsAllow lists strings never redacted.
+	RedactSecrets bool     `json:"redact_secrets"`
+	SecretsAllow  []string `json:"secrets_allow,omitempty"`
+
 	// IgnoredProjectHooks is set by Load when the project file defines hooks
 	// that were skipped because the project is not trusted.
 	IgnoredProjectHooks bool `json:"-"`
@@ -92,6 +106,8 @@ func Default() Config {
 		Theme:        "auto",
 		Provider:     "anthropic",
 		Sandbox:      "off",
+
+		RedactSecrets: true,
 	}
 }
 
@@ -213,6 +229,14 @@ func applyEnv(cfg *Config) {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Model) == "" {
 		return fmt.Errorf("config: model is empty")
+	}
+	if err := c.Budget.Validate(); err != nil {
+		return fmt.Errorf("config: budget: %w", err)
+	}
+	switch c.AuditSync {
+	case "", "always", "interval", "never":
+	default:
+		return fmt.Errorf("config: audit_sync %q is not one of always, interval, never", c.AuditSync)
 	}
 	if c.Effort != "" && !ValidEffort(c.Effort) {
 		return fmt.Errorf("config: effort %q is not one of %s", c.Effort, strings.Join(Efforts, ", "))

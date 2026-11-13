@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/audit"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/policy"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/pricing"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/tools"
 )
@@ -56,6 +58,8 @@ type Agent struct {
 	// Hooks runs user-configured commands around prompts and tool calls.
 	// Nil means no hooks.
 	Hooks *hooks.Runner
+	// Gov enforces policy, audit, secret redaction and budgets; nil is off.
+	Gov *Governance
 	// BeforeWrite, when set, is called before any file-changing tool runs,
 	// for example to checkpoint the files it is about to touch.
 	BeforeWrite func(call *tools.Call)
@@ -162,6 +166,7 @@ func (a *Agent) AddUsage(model string, u llm.Usage) {
 	if sink != nil {
 		sink.Usage(model, u)
 	}
+	a.Gov.afterModel(model, u, 0, nil, sink)
 }
 
 // ModelUsage is the usage and cost billed to one model in this session.
@@ -299,7 +304,7 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 			Effort:       s.Effort,
 			ShowThinking: s.ShowThinking,
 		}
-		resp, err := a.Provider.Stream(ctx, req, sink.Stream)
+		resp, err := a.governedStream(ctx, req, sink)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ErrInterrupted
@@ -377,8 +382,10 @@ type prepared struct {
 	call    *tools.Call
 	verdict permission.Verdict
 	reason  string
-	result  llm.Block
-	done    bool
+	// decision is how the call was allowed, for the audit log.
+	decision string
+	result   llm.Block
+	done     bool
 }
 
 // runTools executes tool calls and returns their results in call order.
@@ -419,11 +426,26 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]ll
 			}
 			hookApproved = res.Approved
 		}
+		if err := a.Gov.auditBroken(); err != nil {
+			fail(err.Error())
+			continue
+		}
+		if g := a.Gov; g != nil && g.Policy.Active() {
+			d := g.Policy.CheckTool(policy.RequestFor(call, u.Input, a.Env.Root))
+			if !d.Allowed {
+				g.log(d.Record(u.ToolName))
+				fail(d.UserText())
+				continue
+			}
+		}
 		p.verdict, p.reason = a.Gate.Check(call)
+		p.decision = audit.DecisionAllow
 		if p.verdict == permission.Deny {
+			a.Gov.log(audit.ToolCall(u.ToolName, u.ToolUseID, call.Kind.String(), u.Input, audit.DecisionDeny, 0, errors.New(p.reason)))
 			fail("not allowed: " + p.reason)
 		} else if p.verdict == permission.Ask && hookApproved && !permission.IsDestructive(call.Command) {
 			p.verdict = permission.Allow
+			p.decision = "hook"
 		}
 	}
 
@@ -459,8 +481,13 @@ func (a *Agent) runTools(ctx context.Context, uses []llm.Block, sink Sink) ([]ll
 			switch sink.Approve(ctx, p.call, p.reason) {
 			case permission.DecisionAllowSession:
 				a.Gate.Grant(p.call)
+				p.decision = audit.DecisionSession
+				a.Gov.log(audit.Approval(p.use.ToolName, p.use.ToolUseID, audit.DecisionSession, p.reason))
 			case permission.DecisionAllowOnce:
+				p.decision = audit.DecisionOnce
+				a.Gov.log(audit.Approval(p.use.ToolName, p.use.ToolUseID, audit.DecisionOnce, p.reason))
 			default:
+				a.Gov.log(audit.Approval(p.use.ToolName, p.use.ToolUseID, audit.DecisionDecline, p.reason))
 				if ctx.Err() != nil {
 					p.result = errorResult(p.use.ToolUseID, "Not run: the user interrupted.")
 				} else {
@@ -487,7 +514,9 @@ func (a *Agent) execute(ctx context.Context, p *prepared, sink Sink) {
 		a.BeforeWrite(p.call)
 	}
 	sink.ToolStart(p.use.ToolUseID, p.call)
+	start := time.Now()
 	output, err := p.call.Run(ctx)
+	a.Gov.log(audit.ToolCall(p.use.ToolName, p.use.ToolUseID, p.call.Kind.String(), p.use.Input, p.decision, time.Since(start), err))
 	sink.ToolDone(p.use.ToolUseID, p.call, output, err)
 	text := output
 	if err != nil {

@@ -73,6 +73,52 @@ type Gate struct {
 	mode      Mode
 	allowCmds []string
 	session   map[string]bool
+	clamp     func(Mode) (Mode, string)
+}
+
+// SetClamp installs a limit on modes, such as a managed policy's maximum.
+// clamp returns the mode to use and, when it lowered the mode, why.
+func (g *Gate) SetClamp(clamp func(Mode) (Mode, string)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.clamp = clamp
+	if clamp != nil {
+		g.mode, _ = clamp(g.mode)
+	}
+}
+
+// Switch changes the mode within the clamp. It returns the mode now in
+// effect and, when the request was lowered, the reason.
+func (g *Gate) Switch(m Mode) (Mode, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	why := ""
+	if g.clamp != nil {
+		m, why = g.clamp(m)
+	}
+	g.mode = m
+	return m, why
+}
+
+// Cycle moves to the next mode the clamp allows.
+func (g *Gate) Cycle() Mode {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.mode
+	for i := 0; i < 4; i++ {
+		m = m.Next()
+		if g.clamp == nil {
+			break
+		}
+		if c, why := g.clamp(m); why == "" && c == m {
+			break
+		}
+	}
+	if g.clamp != nil {
+		m, _ = g.clamp(m)
+	}
+	g.mode = m
+	return m
 }
 
 // NewGate builds a gate. allowCommands are command prefixes (for example

@@ -28,6 +28,7 @@ type capSources struct {
 	mcp      *mcp.Manager
 	cp       *checkpoint.Store
 	ts       *toolset
+	gv       *governance
 	// extra lets later integrations add their own lines.
 	extra []func() []ui.Capability
 }
@@ -139,6 +140,9 @@ func (s *capSources) capabilities() []ui.Capability {
 	}
 	if s.ts != nil {
 		out = append(out, pluginCaps(s.ts)...)
+	}
+	if s.gv != nil {
+		out = append(out, s.gv.capabilities()...)
 	}
 	for _, f := range s.extra {
 		out = append(out, f()...)

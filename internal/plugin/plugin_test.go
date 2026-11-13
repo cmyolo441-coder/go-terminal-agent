@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -245,7 +244,7 @@ func TestToolResultProtocol(t *testing.T) {
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
 	deadline := time.Now().Add(3 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
+	for processAlive(pid) {
 		if time.Now().After(deadline) {
 			t.Fatalf("background child %d survived the process-group kill", pid)
 		}

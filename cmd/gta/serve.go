@@ -73,6 +73,10 @@ func runServe(args []string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	gv, err := loadPolicy(&cfg)
+	if err != nil {
+		return err
+	}
 	if _, err := permission.ParseMode(cfg.PermissionMode); err != nil {
 		return err
 	}
@@ -80,6 +84,13 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := gv.checkModel(cfg); err != nil {
+		return err
+	}
+	if err := gv.build(cfg, root, "serve"); err != nil {
+		return err
+	}
+	defer gv.close()
 	if hint != "" {
 		fmt.Fprintln(os.Stderr, "gta:", hint)
 	}
@@ -106,6 +117,11 @@ func runServe(args []string) error {
 		}
 		if o.Mode != "" {
 			c.PermissionMode = o.Mode
+		}
+		if o.Model != "" {
+			if err := gv.checkModel(c); err != nil {
+				return nil, err
+			}
 		}
 		m, err := permission.ParseMode(c.PermissionMode)
 		if err != nil {
@@ -134,6 +150,7 @@ func runServe(args []string) error {
 			return nil, err
 		}
 		ag.Hooks = hk
+		gv.attach(ag)
 		ts.ag = ag
 		addTaskTool(ag, c, root, ts)
 		return ag, nil

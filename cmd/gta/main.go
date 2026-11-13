@@ -130,6 +130,10 @@ func run(args []string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	gv, err := loadPolicy(&cfg)
+	if err != nil {
+		return err
+	}
 	mode, err := permission.ParseMode(cfg.PermissionMode)
 	if err != nil {
 		return err
@@ -144,6 +148,9 @@ func run(args []string) error {
 	}
 	provider, hint, err := buildProvider(&cfg, f.model != "", false)
 	if err != nil {
+		return err
+	}
+	if err := gv.checkModel(cfg); err != nil {
 		return err
 	}
 	policy, err := buildSandbox(cfg, env)
@@ -164,6 +171,10 @@ func run(args []string) error {
 		}
 	}
 
+	if err := gv.build(cfg, root, sess.ID); err != nil {
+		return err
+	}
+	defer gv.close()
 	hookRunner, err := buildHooks(cfg, root, sess.ID)
 	if err != nil {
 		return err
@@ -193,6 +204,7 @@ func run(args []string) error {
 		MaxTurns:     cfg.MaxTurns,
 	})
 	ag.Hooks = hookRunner
+	gv.attach(ag)
 	ts.ag = ag
 	addTaskTool(ag, cfg, root, ts)
 	cp, cpErr := setupCheckpoints(ag, sess.ID)
@@ -206,7 +218,8 @@ func run(args []string) error {
 	}
 	registerCommands(root, cfg, cp, hookRunner, policy, mcpManager)
 	registerPluginCommands(ts)
-	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts}
+	registerGovernanceCommands(gv)
+	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp, ts: ts, gv: gv}
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}

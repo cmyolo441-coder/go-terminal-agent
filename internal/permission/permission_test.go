@@ -90,3 +90,26 @@ func TestModeCycle(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestGateClamp(t *testing.T) {
+	g := NewGate(ModeYolo, nil)
+	g.SetClamp(func(m Mode) (Mode, string) {
+		if m == ModeYolo || m == ModeAutoEdit {
+			return ModeAsk, "policy allows up to ask"
+		}
+		return m, ""
+	})
+	if g.Mode() != ModeAsk {
+		t.Fatalf("clamp not applied at install: %s", g.Mode())
+	}
+	if m, why := g.Switch(ModeYolo); m != ModeAsk || why == "" {
+		t.Fatalf("Switch(yolo) = %s %q", m, why)
+	}
+	seen := map[Mode]bool{}
+	for i := 0; i < 6; i++ {
+		seen[g.Cycle()] = true
+	}
+	if seen[ModeYolo] || seen[ModeAutoEdit] || !seen[ModePlan] || !seen[ModeAsk] {
+		t.Fatalf("cycle visited %v", seen)
+	}
+}

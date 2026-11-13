@@ -240,7 +240,11 @@ func (b *batch) newChild(idx int) (*agent.Agent, error) {
 		gate = b.gate
 	}
 	sys := systemPrompt(b.mode, env.Root, reg.Names(), idx, b.total, b.settings.MaxTurns, b.tool.cfg.Instructions)
-	return agent.New(b.tool.cfg.Provider, reg, env, gate, sys, b.settings), nil
+	child := agent.New(b.tool.cfg.Provider, reg, env, gate, sys, b.settings)
+	if b.tool.cfg.Setup != nil {
+		b.tool.cfg.Setup(child)
+	}
+	return child, nil
 }
 
 // readOnlyRegistry picks the read-only tools from the parent's registry,
