@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# GoReleaser v2 configuration for gta.
+#
+#   goreleaser check                          validate this file
+#   goreleaser release --snapshot --clean     local build into ./dist (make release-snapshot)
+#   goreleaser release --clean                what .github/workflows/release.yml runs on a v* tag
+version: 2
+
+project_name: gta
+
+before:
+  hooks:
+    - go mod download
+    - go mod verify
+
+builds:
+  - id: gta
+    main: ./cmd/gta
+    binary: gta
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/cmyolo441-coder/go-terminal-agent/internal/version.Version={{ .Version }}
+      - -X github.com/cmyolo441-coder/go-terminal-agent/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/cmyolo441-coder/go-terminal-agent/internal/version.Date={{ .CommitDate }}
+    # Reproducible builds: the binary's mtime and the injected date come from
+    # the commit, not from the machine that built it.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: gta
+    ids:
+      - gta
+    # gta_1.2.3_linux_amd64.tar.gz; scripts/install.sh, scripts/install.ps1 and
+    # packaging/homebrew/gta.rb depend on this name.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# One SPDX SBOM per archive, made with syft (the release workflow installs it).
+sboms:
+  - artifacts: archive
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge pull request"
+      - "^Merge branch"
+      - "(?i)^(docs|test|ci|chore)(\\(.*\\))?:"
+
+release:
+  github:
+    owner: cmyolo441-coder
+    name: go-terminal-agent
+  # v1.0.0-rc.1 and the like are marked as pre-releases.
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/cmyolo441-coder/go-terminal-agent/{{ .Tag }}/scripts/install.sh | sh -s -- {{ .Tag }}
+    ```
+
+    Every archive is listed with its SHA-256 in `checksums.txt`; the install
+    scripts refuse an archive whose checksum does not match.
