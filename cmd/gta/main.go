@@ -32,6 +32,7 @@ Usage:
   gta [flags] [prompt]           start the interactive agent (optionally with a first prompt)
   gta -p "prompt" [flags]        run one prompt non-interactively and print the answer
   echo "prompt" | gta -p         read the prompt from stdin
+  gta serve [flags]              run a local HTTP API (gta serve -h)
 
 Flags:
 `
@@ -85,7 +86,12 @@ func parseFlags(args []string) (flags, []string, error) {
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	run := run
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "serve" {
+		run, args = runServe, args[1:]
+	}
+	if err := run(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}

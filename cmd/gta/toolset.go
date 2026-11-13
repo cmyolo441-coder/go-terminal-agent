@@ -112,6 +112,14 @@ func (ts *toolset) full() *tools.Registry {
 	return tools.NewRegistry(all...)
 }
 
+// forAgent returns a toolset for another agent that shares this one's
+// core tools, plugins and MCP manager, as it stands now.
+func (ts *toolset) forAgent() *toolset {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return &toolset{core: ts.core, plugins: ts.plugins, mcp: ts.mcp}
+}
+
 // setMCP attaches the MCP manager whose tools join the registry.
 func (ts *toolset) setMCP(m *mcp.Manager) {
 	ts.mu.Lock()
