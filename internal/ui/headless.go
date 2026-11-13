@@ -138,3 +138,8 @@ func RunHeadless(ctx context.Context, ag *agent.Agent, promptText, sessionID str
 	}
 	return runErr
 }
+
+// SubagentProgress logs sub-agent progress to the log stream.
+func (s *headlessSink) SubagentProgress(index int, desc, event string) {
+	fmt.Fprintf(s.log, "  ⎿ sub-agent %d (%s): %s\n", index+1, desc, event)
+}

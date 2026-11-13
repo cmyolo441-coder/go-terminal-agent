@@ -10,6 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/openai"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/sandbox"
 )
 
 // DefaultModel is the model used when none is configured.
@@ -33,6 +37,27 @@ type Config struct {
 	BaseURL        string   `json:"base_url"`
 	// Theme is "auto", "dark" or "light"; it picks the markdown style.
 	Theme string `json:"theme"`
+
+	// Provider is "anthropic" (default) or an OpenAI-compatible preset such
+	// as openai, openrouter, ollama, gemini, groq, deepseek, together,
+	// lmstudio, vllm or nvidia. Keys always come from environment variables.
+	Provider string `json:"provider"`
+	// SubagentModel is the model the task tool's sub-agents use; empty means
+	// the main model.
+	SubagentModel string `json:"subagent_model"`
+	// Sandbox is off, workspace-write or read-only and applies to the bash
+	// tool. SandboxNetwork keeps network access inside the sandbox.
+	Sandbox        string `json:"sandbox"`
+	SandboxNetwork bool   `json:"sandbox_network"`
+	// Hooks maps hook events to commands. Hooks from a project config file
+	// run only when the user config sets trust_project_hooks, because a
+	// cloned repository should not be able to run commands on its own.
+	Hooks             hooks.Config `json:"hooks,omitempty"`
+	TrustProjectHooks bool         `json:"trust_project_hooks"`
+
+	// IgnoredProjectHooks is set by Load when the project file defines hooks
+	// that were skipped because the project is not trusted.
+	IgnoredProjectHooks bool `json:"-"`
 }
 
 // Default returns the built-in settings.
@@ -51,6 +76,8 @@ func Default() Config {
 		MaxTurns:     200,
 		ShellTimeout: 120,
 		Theme:        "auto",
+		Provider:     "anthropic",
+		Sandbox:      "off",
 	}
 }
 
@@ -88,11 +115,27 @@ func ProjectFile(root string) string { return filepath.Join(root, ".gta", "confi
 // Load merges defaults, the user file, the project file and the environment.
 func Load(root string) (Config, error) {
 	cfg := Default()
-	for _, p := range []string{UserFile(), ProjectFile(root)} {
-		if err := mergeFile(&cfg, p); err != nil {
-			return cfg, err
+	if err := mergeFile(&cfg, UserFile()); err != nil {
+		return cfg, err
+	}
+	userHooks, trust := cfg.Hooks, cfg.TrustProjectHooks
+	cfg.Hooks = nil
+	if err := mergeFile(&cfg, ProjectFile(root)); err != nil {
+		return cfg, err
+	}
+	// The project file may not grant itself trust or replace user hooks.
+	projectHooks := cfg.Hooks
+	cfg.TrustProjectHooks = trust
+	cfg.Hooks = hooks.Config{}
+	for ev, hs := range userHooks {
+		cfg.Hooks[ev] = append(cfg.Hooks[ev], hs...)
+	}
+	if trust {
+		for ev, hs := range projectHooks {
+			cfg.Hooks[ev] = append(cfg.Hooks[ev], hs...)
 		}
 	}
+	cfg.IgnoredProjectHooks = !trust && projectHooks.Count() > 0
 	applyEnv(&cfg)
 	return cfg, cfg.Validate()
 }
@@ -129,7 +172,13 @@ func applyEnv(cfg *Config) {
 			cfg.MaxTokens = n
 		}
 	}
-	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" && cfg.BaseURL == "" {
+	if v := os.Getenv("GTA_PROVIDER"); v != "" {
+		cfg.Provider = v
+	}
+	if v := os.Getenv("GTA_SANDBOX"); v != "" {
+		cfg.Sandbox = v
+	}
+	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" && cfg.BaseURL == "" && (cfg.Provider == "" || cfg.Provider == "anthropic") {
 		cfg.BaseURL = v
 	}
 }
@@ -153,12 +202,33 @@ func (c Config) Validate() error {
 	if c.MaxTurns < 1 {
 		return fmt.Errorf("config: max_turns must be at least 1")
 	}
+	if _, err := sandbox.ParseMode(c.Sandbox); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if err := c.Hooks.Validate(); err != nil {
+		return fmt.Errorf("config: hooks: %w", err)
+	}
+	if !ValidProvider(c.Provider) {
+		return fmt.Errorf("config: provider %q is not one of %s", c.Provider, strings.Join(Providers(), ", "))
+	}
 	switch c.Theme {
 	case "auto", "dark", "light":
 	default:
 		return fmt.Errorf("config: theme %q is not one of auto, dark, light", c.Theme)
 	}
 	return nil
+}
+
+// Providers lists the accepted provider names.
+func Providers() []string { return append([]string{"anthropic"}, openai.PresetNames()...) }
+
+// ValidProvider reports whether name is a known provider.
+func ValidProvider(name string) bool {
+	if name == "" || name == "anthropic" {
+		return true
+	}
+	_, ok := openai.LookupPreset(name)
+	return ok
 }
 
 // SaveUser writes the given config to the user file.

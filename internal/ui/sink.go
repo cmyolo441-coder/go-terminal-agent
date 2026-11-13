@@ -35,6 +35,10 @@ type (
 		reason string
 		reply  chan permission.Decision
 	}
+	subagentMsg struct {
+		index       int
+		desc, event string
+	}
 	runDoneMsg   struct{ err error }
 	shellDoneMsg struct {
 		cmd, output string
@@ -63,4 +67,8 @@ func (s teaSink) Approve(ctx context.Context, c *tools.Call, reason string) perm
 	case <-ctx.Done():
 		return permission.DecisionDeny
 	}
+}
+
+func (s teaSink) SubagentProgress(index int, desc, event string) {
+	s.p.Send(subagentMsg{index, desc, event})
 }

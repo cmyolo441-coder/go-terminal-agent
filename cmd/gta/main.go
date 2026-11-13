@@ -17,7 +17,6 @@ import (
 
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/agent"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
-	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm/anthropic"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/prompt"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/session"
@@ -50,6 +49,8 @@ type flags struct {
 	maxTurns   int
 	showVer    bool
 	noThinking bool
+	provider   string
+	sandbox    string
 }
 
 func parseFlags(args []string) (flags, []string, error) {
@@ -73,6 +74,8 @@ func parseFlags(args []string) (flags, []string, error) {
 	fs.BoolVar(&f.web, "web", false, "enable server-side web search and web fetch")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "maximum model calls per prompt")
 	fs.BoolVar(&f.noThinking, "no-thinking", false, "hide reasoning summaries")
+	fs.StringVar(&f.provider, "provider", "", "model provider: anthropic, openai, openrouter, ollama, gemini, groq, deepseek, together, lmstudio, vllm, nvidia")
+	fs.StringVar(&f.sandbox, "sandbox", "", "shell sandbox: off, workspace-write, read-only")
 	fs.BoolVar(&f.showVer, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return f, nil, err
@@ -132,20 +135,13 @@ func run(args []string) error {
 	if cfg.ShellTimeout > 0 {
 		env.ShellTimeout = secondsDuration(cfg.ShellTimeout)
 	}
-	provider := anthropic.New(anthropic.Options{
-		BaseURL:    cfg.BaseURL,
-		WebSearch:  cfg.WebSearch,
-		WebFetch:   cfg.WebFetch,
-		Compaction: cfg.Compaction,
-		Fallbacks:  cfg.Fallbacks,
-	})
-	ag := agent.New(provider, tools.Default(), env, permission.NewGate(mode, cfg.AllowCommands), prompt.Build(root), agent.Settings{
-		Model:        cfg.Model,
-		Effort:       cfg.Effort,
-		MaxTokens:    cfg.MaxTokens,
-		ShowThinking: cfg.ShowThinking,
-		MaxTurns:     cfg.MaxTurns,
-	})
+	provider, hint, err := buildProvider(&cfg, f.model != "", false)
+	if err != nil {
+		return err
+	}
+	if _, err := buildSandbox(cfg, env); err != nil {
+		return err
+	}
 
 	store := session.DefaultStore()
 	sess := session.New(root, cfg.Model)
@@ -159,6 +155,33 @@ func run(args []string) error {
 			return err
 		}
 	}
+
+	hookRunner, err := buildHooks(cfg, root, sess.ID)
+	if err != nil {
+		return err
+	}
+	system := prompt.Build(root)
+	if extra, warns := sessionStartContext(hookRunner); extra != "" || len(warns) > 0 {
+		for _, w := range warns {
+			fmt.Fprintln(os.Stderr, "gta: hook warning:", w)
+		}
+		if extra != "" {
+			system += "\n\n<session-start-hook>\n" + extra + "\n</session-start-hook>"
+		}
+	}
+	if cfg.IgnoredProjectHooks {
+		fmt.Fprintln(os.Stderr, "gta: ignoring hooks in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")
+	}
+
+	ag := agent.New(provider, tools.Default(), env, permission.NewGate(mode, cfg.AllowCommands), system, agent.Settings{
+		Model:        cfg.Model,
+		Effort:       cfg.Effort,
+		MaxTokens:    cfg.MaxTokens,
+		ShowThinking: cfg.ShowThinking,
+		MaxTurns:     cfg.MaxTurns,
+	})
+	ag.Hooks = hookRunner
+	addTaskTool(ag, cfg, root)
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}
@@ -196,7 +219,7 @@ func run(args []string) error {
 		Root:          root,
 		Version:       version.Version,
 		InitialPrompt: promptText,
-		AuthHint:      authHint(),
+		AuthHint:      hint,
 	})
 	if len(ag.History()) > 0 {
 		fmt.Printf("\nSession saved. Resume with: gta --resume %s\n", sess.ID)
@@ -226,6 +249,12 @@ func applyFlags(cfg *config.Config, f flags) {
 	if f.noThinking {
 		cfg.ShowThinking = false
 	}
+	if f.provider != "" {
+		cfg.Provider = f.provider
+	}
+	if f.sandbox != "" {
+		cfg.Sandbox = f.sandbox
+	}
 }
 
 func saveSession(store *session.Store, sess *session.Session, ag *agent.Agent) {
@@ -235,17 +264,4 @@ func saveSession(store *session.Store, sess *session.Session, ag *agent.Agent) {
 	if err := store.Save(sess); err != nil {
 		fmt.Fprintln(os.Stderr, "gta: could not save session:", err)
 	}
-}
-
-// authHint explains how to authenticate when no credentials are visible.
-// The SDK also reads `ant auth login` profiles, so this is only a hint.
-func authHint() string {
-	if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
-		return ""
-	}
-	home, _ := os.UserHomeDir()
-	if _, err := os.Stat(filepath.Join(home, ".config", "anthropic")); err == nil {
-		return ""
-	}
-	return "No ANTHROPIC_API_KEY found. Export one, or run `ant auth login`, before sending a prompt."
 }

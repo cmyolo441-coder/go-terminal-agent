@@ -61,6 +61,7 @@ type Agent struct {
 	mu       sync.Mutex
 	settings Settings
 	history  []llm.Message
+	active   Sink
 	usage    llm.Usage
 	cost     float64
 	context  int64
@@ -143,6 +144,35 @@ func (a *Agent) record(model string, u llm.Usage) {
 	a.context = u.ContextTokens() + u.OutputTokens
 }
 
+// AddUsage bills usage made on the agent's behalf, such as by sub-agents,
+// without touching the main conversation's context size.
+func (a *Agent) AddUsage(model string, u llm.Usage) {
+	a.mu.Lock()
+	a.usage.Add(u)
+	if c, ok := pricing.Cost(model, u); ok {
+		a.cost += c
+	}
+	sink := a.active
+	a.mu.Unlock()
+	if sink != nil {
+		sink.Usage(model, u)
+	}
+}
+
+// ActiveSink returns the sink of the turn in progress, or nil when idle.
+// Tools that need to reach the user mid-turn, like sub-agents asking for
+// approval, go through it.
+func (a *Agent) ActiveSink() Sink {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.active
+}
+
+// ProgressSink is implemented by sinks that can show sub-agent progress.
+type ProgressSink interface {
+	SubagentProgress(index int, description, event string)
+}
+
 // ErrInterrupted is returned when the user cancels a turn.
 var ErrInterrupted = errors.New("interrupted")
 
@@ -163,6 +193,14 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 		}
 	}
 	a.appendUser(blocks)
+	a.mu.Lock()
+	a.active = sink
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.active = nil
+		a.mu.Unlock()
+	}()
 	s := a.Settings()
 	stopRetries := 0
 	for turn := 0; turn < s.MaxTurns; turn++ {

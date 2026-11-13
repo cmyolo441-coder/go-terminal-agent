@@ -4,9 +4,12 @@
 package ui
 
 import (
+	"sort"
+
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/subagent"
 	"os"
 	"strings"
 	"time"
@@ -77,6 +80,7 @@ type model struct {
 	thinkBuf  strings.Builder
 	blockKind string
 	running   []runningTool
+	subs      map[int]subRow
 	turnUsage llm.Usage
 	turnCost  float64
 	costKnown bool
@@ -99,6 +103,8 @@ type model struct {
 }
 
 type agentSettings = agent.Settings
+
+type subRow struct{ desc, event string }
 
 type runningTool struct {
 	id   string
@@ -216,6 +222,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toolFailedMsg:
 		m.flushStreams(true)
 		m.emit(renderToolFailed(msg.name, msg.reason, m.width))
+	case subagentMsg:
+		if subagent.Terminal(msg.event) {
+			delete(m.subs, msg.index)
+			m.emit(sFaint.Render("  "+gResult+"  ") + sMuted.Render(fmt.Sprintf("sub-agent %d · %s · ", msg.index+1, clip(msg.desc, 50))) + subEventStyle(msg.event).Render(msg.event))
+		} else {
+			if m.subs == nil {
+				m.subs = map[int]subRow{}
+			}
+			m.subs[msg.index] = subRow{msg.desc, msg.event}
+		}
 	case usageMsg:
 		m.turnUsage.Add(msg.usage)
 		if c, ok := pricing.Cost(msg.model, msg.usage); ok {
@@ -527,6 +543,7 @@ func (m *model) startRun(text, shown string) tea.Cmd {
 func (m *model) finishRun(err error) tea.Cmd {
 	m.flushStreams(true)
 	m.running = nil
+	m.subs = nil
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -700,6 +717,17 @@ func (m *model) liveView() string {
 		}
 		parts = append(parts, line)
 	}
+	if len(m.subs) > 0 {
+		idx := make([]int, 0, len(m.subs))
+		for i := range m.subs {
+			idx = append(idx, i)
+		}
+		sort.Ints(idx)
+		for _, i := range idx {
+			r := m.subs[i]
+			parts = append(parts, "  "+sFaint.Render(gResult+" ")+sAccent2.Render(fmt.Sprintf("#%d ", i+1))+sText.Render(clip(r.desc, m.width/2))+sFaint.Render(" · "+clip(r.event, m.width/3)))
+		}
+	}
 	if m.phase == phaseRunning {
 		verb := m.verb
 		if verb == "" {
@@ -800,14 +828,23 @@ func (m *model) approvalView() string {
 		body = append(body, sAmber.Render("⚠ "+a.reason))
 	}
 	body = append(body, "")
-	switch c.Kind {
-	case tools.KindWrite:
+	switch {
+	case c.Tool == "task":
+		lines := strings.Split(strings.TrimRight(c.Preview, "\n"), "\n")
+		for i, l := range lines {
+			if i == 14 {
+				body = append(body, sFaint.Render(fmt.Sprintf("… %d more lines", len(lines)-i)))
+				break
+			}
+			body = append(body, sText.Render(clip(l, inner)))
+		}
+	case c.Kind == tools.KindWrite:
 		diff := renderDiff(c.Preview, inner, 18)
 		if len(diff) == 0 {
 			diff = []string{sMuted.Render("(no textual change)")}
 		}
 		body = append(body, diff...)
-	case tools.KindExec:
+	case c.Kind == tools.KindExec:
 		for i, l := range strings.Split(c.Command, "\n") {
 			if i == 10 {
 				body = append(body, sFaint.Render("…"))
@@ -901,4 +938,13 @@ func orDefault(s, d string) string {
 		return d
 	}
 	return s
+}
+
+func subEventStyle(ev string) lipgloss.Style {
+	switch {
+	case strings.HasPrefix(ev, subagent.EventFailedPrefix), ev == subagent.EventCancelled:
+		return sRed
+	default:
+		return sGreen
+	}
 }

@@ -42,3 +42,43 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		t.Fatal("expected unknown key error")
 	}
 }
+
+func TestProjectHooksNeedUserTrust(t *testing.T) {
+	user := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("GTA_CONFIG_DIR", user)
+	os.MkdirAll(filepath.Join(root, ".gta"), 0o755)
+	write := func(p, s string) {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(root, ".gta", "config.json"), `{"trust_project_hooks": true, "hooks": {"stop": [{"command": "evil"}]}}`)
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hooks.Count() != 0 || cfg.TrustProjectHooks || !cfg.IgnoredProjectHooks {
+		t.Fatalf("untrusted project hooks were loaded: %+v", cfg.Hooks)
+	}
+	write(filepath.Join(user, "config.json"), `{"trust_project_hooks": true, "hooks": {"stop": [{"command": "mine"}]}}`)
+	cfg, err = Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hooks.Count() != 2 || cfg.IgnoredProjectHooks {
+		t.Fatalf("trusted hooks = %+v", cfg.Hooks)
+	}
+}
+
+func TestProviderValidation(t *testing.T) {
+	c := Default()
+	c.Provider = "nvidia"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Provider = "nope"
+	if err := c.Validate(); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+}
