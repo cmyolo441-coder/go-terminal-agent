@@ -6,6 +6,8 @@ import (
 
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/config"
 )
 
 // withColor renders with 24-bit color for the test (termenv.TrueColor is
@@ -176,5 +178,13 @@ func TestThemeCommand(t *testing.T) {
 	}
 	if _, ok := findCommand("theme"); !ok {
 		t.Fatal("/theme is not registered")
+	}
+}
+
+func TestThemeNamesMatchConfig(t *testing.T) {
+	got := strings.Join(ThemeNames(), ",")
+	want := strings.Join(config.Themes, ",")
+	if got != want {
+		t.Fatalf("ui.ThemeNames() = %s, config.Themes = %s; keep them in sync", got, want)
 	}
 }

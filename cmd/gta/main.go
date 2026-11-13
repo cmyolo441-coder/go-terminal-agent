@@ -320,6 +320,7 @@ func run(args []string) error {
 		InitialPrompt: promptText,
 		AuthHint:      hint,
 		Capabilities:  caps.capabilities,
+		Density:       cfg.Density,
 	})
 	if len(ag.History()) > 0 {
 		fmt.Printf("\nSession saved. Resume with: gta --resume %s\n", sess.ID)

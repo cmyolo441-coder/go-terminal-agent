@@ -39,8 +39,11 @@ type Config struct {
 	MaxTurns       int      `json:"max_turns"`
 	ShellTimeout   int      `json:"shell_timeout_sec"`
 	BaseURL        string   `json:"base_url"`
-	// Theme is "auto", "dark" or "light"; it picks the markdown style.
+	// Theme is the color theme: auto, dark, light, high-contrast, arctic,
+	// solar or mono. Keep Themes in sync with ui.ThemeNames.
 	Theme string `json:"theme"`
+	// Density is "compact" (long tool output collapsed) or "expanded".
+	Density string `json:"density"`
 
 	// Provider is "anthropic" (default) or an OpenAI-compatible preset such
 	// as openai, openrouter, ollama, gemini, groq, deepseek, together,
@@ -150,6 +153,7 @@ func Default() Config {
 		MaxTurns:     200,
 		ShellTimeout: 120,
 		Theme:        "auto",
+		Density:      "compact",
 		Provider:     "anthropic",
 		Sandbox:      "off",
 
@@ -158,6 +162,18 @@ func Default() Config {
 		RepoMapBudget: 1500,
 		LSP:           true,
 	}
+}
+
+// Themes lists valid color themes (kept in sync with ui.ThemeNames).
+var Themes = []string{"auto", "dark", "light", "high-contrast", "arctic", "solar", "mono"}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Efforts lists valid effort levels.
@@ -332,10 +348,13 @@ func (c Config) Validate() error {
 	if !ValidProvider(c.Provider) {
 		return fmt.Errorf("config: provider %q is not one of %s", c.Provider, strings.Join(Providers(), ", "))
 	}
-	switch c.Theme {
-	case "auto", "dark", "light":
+	if !contains(Themes, c.Theme) {
+		return fmt.Errorf("config: theme %q is not one of %s", c.Theme, strings.Join(Themes, ", "))
+	}
+	switch c.Density {
+	case "", "compact", "expanded":
 	default:
-		return fmt.Errorf("config: theme %q is not one of auto, dark, light", c.Theme)
+		return fmt.Errorf("config: density %q is not one of compact, expanded", c.Density)
 	}
 	return nil
 }
