@@ -53,6 +53,7 @@ var builtin []command
 func init() {
 	builtin = []command{
 		{name: "help", aliases: []string{"?"}, help: "Show commands and keys", run: cmdHelp},
+		{name: "status", help: "Dashboard: session, model, safety, integrations, workspace", run: cmdStatus},
 		{name: "clear", aliases: []string{"new", "reset"}, help: "Start a new conversation", run: cmdClear},
 		{name: "model", args: "[id]", help: "Show or switch the model", run: cmdModel},
 		{name: "effort", args: "[level]", help: "Reasoning effort: low, medium, high, xhigh, max", run: cmdEffort},
@@ -261,21 +262,6 @@ func cmdThinking(m *model, _ string) tea.Cmd {
 	} else {
 		m.emit(renderInfo("Reasoning summaries are hidden."))
 	}
-	return nil
-}
-
-func cmdCost(m *model, _ string) tea.Cmd {
-	u, cost, ctxTok := m.ag.Stats()
-	lines := []string{
-		renderInfo("Session usage"),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("input", 14)), sText.Render(fmtTokens(u.InputTokens))),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("cache read", 14)), sText.Render(fmtTokens(u.CacheReadTokens))),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("cache write", 14)), sText.Render(fmtTokens(u.CacheWriteTokens))),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("output", 14)), sText.Render(fmtTokens(u.OutputTokens))),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("context now", 14)), sText.Render(fmtTokens(ctxTok))),
-		fmt.Sprintf("  %s %s", sMuted.Render(padRight("est. cost", 14)), sAccentB.Render(fmtCost(cost))),
-	}
-	m.emit(strings.Join(lines, "\n"))
 	return nil
 }
 

@@ -194,6 +194,7 @@ func run(args []string) error {
 		defer mcpManager.Close()
 	}
 	registerCommands(root, cfg, cp, hookRunner, policy, mcpManager)
+	caps := &capSources{cfg: cfg, root: root, ag: ag, authHint: hint, policy: policy, hooks: hookRunner, mcp: mcpManager, cp: cp}
 	if len(sess.Messages) > 0 {
 		ag.SetHistory(sess.Messages, sess.Usage, sess.CostUSD)
 	}
@@ -233,6 +234,7 @@ func run(args []string) error {
 		Version:       version.Version,
 		InitialPrompt: promptText,
 		AuthHint:      hint,
+		Capabilities:  caps.capabilities,
 	})
 	if len(ag.History()) > 0 {
 		fmt.Printf("\nSession saved. Resume with: gta --resume %s\n", sess.ID)

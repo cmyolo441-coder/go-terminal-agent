@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/cmyolo441-coder/go-terminal-agent/internal/hooks"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/llm"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/permission"
 	"github.com/cmyolo441-coder/go-terminal-agent/internal/pricing"
@@ -66,6 +68,9 @@ type Agent struct {
 	history  []llm.Message
 	active   Sink
 	usage    llm.Usage
+	byModel  map[string]*ModelUsage
+	calls    int
+	started  time.Time
 	cost     float64
 	context  int64
 }
@@ -75,7 +80,7 @@ func New(p llm.Provider, reg *tools.Registry, env *tools.Env, gate *permission.G
 	if s.MaxTurns <= 0 {
 		s.MaxTurns = 200
 	}
-	return &Agent{Provider: p, Tools: reg, Env: env, Gate: gate, System: system, settings: s}
+	return &Agent{Provider: p, Tools: reg, Env: env, Gate: gate, System: system, settings: s, started: time.Now()}
 }
 
 // Settings returns the current settings.
@@ -107,6 +112,8 @@ func (a *Agent) SetHistory(h []llm.Message, u llm.Usage, cost float64) {
 	a.usage = u
 	a.cost = cost
 	a.context = 0
+	a.byModel = nil
+	a.calls = 0
 }
 
 // Reset clears the conversation.
@@ -140,10 +147,8 @@ func (a *Agent) appendAssistant(m llm.Message) {
 func (a *Agent) record(model string, u llm.Usage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.usage.Add(u)
-	if c, ok := pricing.Cost(model, u); ok {
-		a.cost += c
-	}
+	a.calls++
+	a.addModelUsageLocked(model, u, false)
 	a.context = u.ContextTokens() + u.OutputTokens
 }
 
@@ -151,15 +156,73 @@ func (a *Agent) record(model string, u llm.Usage) {
 // without touching the main conversation's context size.
 func (a *Agent) AddUsage(model string, u llm.Usage) {
 	a.mu.Lock()
-	a.usage.Add(u)
-	if c, ok := pricing.Cost(model, u); ok {
-		a.cost += c
-	}
+	a.addModelUsageLocked(model, u, true)
 	sink := a.active
 	a.mu.Unlock()
 	if sink != nil {
 		sink.Usage(model, u)
 	}
+}
+
+// ModelUsage is the usage and cost billed to one model in this session.
+type ModelUsage struct {
+	Model string
+	Usage llm.Usage
+	// Calls counts model requests; SubCalls those made by sub-agents.
+	Calls, SubCalls int
+	Cost            float64
+	CostKnown       bool
+}
+
+func (a *Agent) addModelUsageLocked(model string, u llm.Usage, sub bool) {
+	a.usage.Add(u)
+	if a.byModel == nil {
+		a.byModel = map[string]*ModelUsage{}
+	}
+	mu := a.byModel[model]
+	if mu == nil {
+		mu = &ModelUsage{Model: model}
+		a.byModel[model] = mu
+	}
+	mu.Usage.Add(u)
+	if sub {
+		mu.SubCalls++
+	} else {
+		mu.Calls++
+	}
+	if c, ok := pricing.Cost(model, u); ok {
+		a.cost += c
+		mu.Cost += c
+		mu.CostKnown = true
+	}
+}
+
+// UsageByModel returns per-model usage for this process, most expensive
+// first. Usage restored from a saved session is only in Stats.
+func (a *Agent) UsageByModel() []ModelUsage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ModelUsage, 0, len(a.byModel))
+	for _, m := range a.byModel {
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Cost != out[j].Cost {
+			return out[i].Cost > out[j].Cost
+		}
+		return out[i].Model < out[j].Model
+	})
+	return out
+}
+
+// Started is when this agent was created.
+func (a *Agent) Started() time.Time { return a.started }
+
+// Calls returns the number of main-agent model calls made by this process.
+func (a *Agent) Calls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.calls
 }
 
 // Registry returns the current tool registry.

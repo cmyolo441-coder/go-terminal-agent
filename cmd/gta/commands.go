@@ -55,16 +55,6 @@ func registerCommands(root string, cfg config.Config, cp *checkpoint.Store, hk *
 		ui.Extra{Name: "diff", Args: "[--staged] [paths]", Help: "Show uncommitted changes (git)", Run: func(ctx context.Context, arg string) (string, error) {
 			return cmdDiff(ctx, root, arg)
 		}},
-		ui.Extra{Name: "status", Help: "Show git branch and change counts", Run: func(ctx context.Context, _ string) (string, error) {
-			if !gitx.IsRepo(root) {
-				return "", errors.New("not a git repository")
-			}
-			st, err := gitx.Info(ctx, root)
-			if err != nil {
-				return "", err
-			}
-			return st.String(), nil
-		}},
 		ui.Extra{Name: "commit", Args: "<message>", Help: "Commit all changes with a message (git add -A)", Run: func(ctx context.Context, arg string) (string, error) {
 			msg := strings.TrimSpace(arg)
 			if msg == "" {

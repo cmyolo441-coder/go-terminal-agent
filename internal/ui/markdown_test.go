@@ -48,3 +48,11 @@ func TestClipMiddle(t *testing.T) {
 		t.Fatal("short string changed")
 	}
 }
+
+func TestMeterBounds(t *testing.T) {
+	for _, f := range []float64{-1, 0, 0.5, 1, 2} {
+		if got := lipglossWidth(meter(f, 10)); got != 10 {
+			t.Fatalf("meter(%v) width %d", f, got)
+		}
+	}
+}

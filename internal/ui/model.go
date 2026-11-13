@@ -42,6 +42,9 @@ type Options struct {
 	InitialPrompt string
 	// AuthHint is shown in the banner when no credentials were found.
 	AuthHint string
+	// Capabilities reports integrations (provider, sandbox, MCP, hooks,
+	// git, policy...) for the banner and the /status dashboard.
+	Capabilities func() []Capability
 }
 
 type phase int
@@ -934,13 +937,17 @@ func (m *model) banner() string {
 	if mem := prompt.LoadedMemoryFiles(m.opts.Root); len(mem) > 0 {
 		lines = append(lines, sMuted.Render("memory    ")+sText.Render(strings.Join(mem, ", ")))
 	}
+	if caps := m.bannerCaps(min(m.width-8, 92)); len(caps) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, caps...)
+	}
 	if len(m.ag.History()) > 0 {
 		lines = append(lines, sMuted.Render("session   ")+sText.Render(fmt.Sprintf("resumed %s (%d messages)", m.sess.ID, len(m.ag.History()))))
 	}
 	if m.opts.AuthHint != "" {
 		lines = append(lines, "", sAmber.Render("! ")+sText.Render(m.opts.AuthHint))
 	}
-	lines = append(lines, "", sFaint.Render("/help commands · shift+tab mode · alt+enter newline · esc interrupt · ctrl+c twice exit"))
+	lines = append(lines, "", sFaint.Render("/help · /status · shift+tab mode · alt+enter newline · esc interrupt · ctrl+c ×2 exit"))
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(cAccent).

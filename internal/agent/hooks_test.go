@@ -113,3 +113,24 @@ func TestBeforeWriteCalledForWritesOnly(t *testing.T) {
 		t.Fatalf("BeforeWrite calls = %v", seen)
 	}
 }
+
+func TestUsageByModelSplitsSubagentUsage(t *testing.T) {
+	p := &scripted{responses: []*llm.Response{reply(llm.StopEndTurn, llm.Block{Type: llm.BlockText, Text: "hi"})}}
+	a, _ := newAgent(t, p, permission.ModeAsk)
+	if err := a.Run(context.Background(), llm.UserText("hi"), &sink{}); err != nil {
+		t.Fatal(err)
+	}
+	a.AddUsage("claude-haiku-5-5", llm.Usage{InputTokens: 50, OutputTokens: 5})
+	by := a.UsageByModel()
+	if len(by) != 2 || a.Calls() != 1 {
+		t.Fatalf("by model = %+v, calls %d", by, a.Calls())
+	}
+	total, _, _ := a.Stats()
+	if total.InputTokens != 150 {
+		t.Fatalf("total input %d", total.InputTokens)
+	}
+	a.Reset()
+	if len(a.UsageByModel()) != 0 {
+		t.Fatal("reset kept per-model usage")
+	}
+}
