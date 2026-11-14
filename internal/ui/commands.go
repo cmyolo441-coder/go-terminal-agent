@@ -203,6 +203,7 @@ func cmdHelp(m *model, _ string) tea.Cmd {
 		{"enter", "send · alt+enter or ctrl+j for a new line"},
 		{"↑ / ↓", "history · tab completes commands"},
 		{"shift+tab", "cycle permission mode"},
+		{"ctrl+b", "show or hide the live browser panel (gta --browser)"},
 		{"esc", "interrupt the agent · ctrl+c twice to exit"},
 	} {
 		b.WriteString("  " + sKey.Render(padRight(kv[0], col)) + sMuted.Render(kv[1]) + "\n")

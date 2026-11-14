@@ -49,6 +49,7 @@ type flags struct {
 	cont       bool
 	cwd        string
 	web        bool
+	browser    bool
 	maxTurns   int
 	showVer    bool
 	noThinking bool
@@ -75,6 +76,7 @@ func parseFlags(args []string) (flags, []string, error) {
 	fs.BoolVar(&f.cont, "continue", false, "same as -c")
 	fs.StringVar(&f.cwd, "cwd", "", "workspace root (default: current directory)")
 	fs.BoolVar(&f.web, "web", false, "enable server-side web search and web fetch")
+	fs.BoolVar(&f.browser, "browser", false, "give the agent a real browser it drives like a person, with a live view beside the prompt (Ctrl+B)")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "maximum model calls per prompt")
 	fs.BoolVar(&f.noThinking, "no-thinking", false, "hide reasoning summaries")
 	fs.StringVar(&f.provider, "provider", "", "model provider: anthropic, openai, openrouter, ollama, gemini, groq, deepseek, together, lmstudio, vllm, nvidia")
@@ -250,7 +252,15 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "gta: ignoring hooks in .gta/config.json; set \"trust_project_hooks\": true in your user config to run them")
 	}
 
-	ts := newToolset(cfg, root, ci.tools()...)
+	builtins := ci.tools()
+	var bh *browserHost
+	if cfg.Browser {
+		bh = newBrowserHost(cfg)
+		defer bh.close()
+		builtins = append(builtins, bh.tools()...)
+		ui.Register(bh.command())
+	}
+	ts := newToolset(cfg, root, builtins...)
 	for _, n := range ts.notes {
 		fmt.Fprintln(os.Stderr, "gta:", n)
 	}
@@ -318,7 +328,13 @@ func run(args []string) error {
 		return errors.New("interactive mode needs a terminal; use -p for scripts and pipes")
 	}
 	uiStarted.Store(true)
+	var dock ui.Dock
+	if bh != nil {
+		bh.visible.Store(true)
+		dock = newBrowserDock(bh)
+	}
 	err = ui.Run(ui.Options{
+		Dock:          dock,
 		Agent:         ag,
 		Session:       sess,
 		Store:         store,
@@ -348,6 +364,9 @@ func applyFlags(cfg *config.Config, f flags) {
 	}
 	if f.yolo {
 		cfg.PermissionMode = string(permission.ModeYolo)
+	}
+	if f.browser {
+		cfg.Browser = true
 	}
 	if f.web {
 		cfg.WebSearch, cfg.WebFetch = true, true

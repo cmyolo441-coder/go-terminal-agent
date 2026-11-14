@@ -143,6 +143,6 @@ func reservedCommands() []string {
 		"help", "status", "clear", "new", "reset", "model", "effort", "mode", "thinking", "cost", "usage",
 		"tasks", "todos", "compact", "sessions", "resume", "init", "memory", "tools", "config", "exit", "quit", "q",
 		"diff", "commit", "log", "undo", "checkpoints", "worktree", "sandbox", "hooks", "mcp", "provider", "plugins",
-		"plan", "fixtests", "index", "lsp", "audit", "budget", "policy",
+		"plan", "fixtests", "index", "lsp", "audit", "budget", "policy", "browser",
 	}
 }

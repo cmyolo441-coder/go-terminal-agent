@@ -49,7 +49,33 @@ type Options struct {
 	// (default) collapses long output behind a "+K lines" hint, "expanded"
 	// shows much more. /density switches it at runtime.
 	Density string
+	// Dock, when set, is a panel shown beside the live view, such as the
+	// agent's browser. Ctrl+B shows or hides it.
+	Dock Dock
 }
+
+// Dock is a panel docked to the right of the live view. The UI routes
+// every message to Update and asks for View with the column it may use.
+// All methods are called on the UI goroutine.
+type Dock interface {
+	Init() tea.Cmd
+	Update(msg tea.Msg) tea.Cmd
+	Visible() bool
+	SetVisible(v bool)
+	View(width, height int) string
+}
+
+// dockMinWidth is the narrowest terminal that shows the dock beside the
+// live view; below it the dock is hidden and a hint says why.
+const dockMinWidth = 90
+
+// dockToggleMsg asks the UI to re-lay out after the dock was shown or
+// hidden from outside the UI goroutine (a slash command).
+type dockToggleMsg struct{}
+
+// DockChanged returns a message that makes the UI re-lay out after the
+// dock's visibility changed.
+func DockChanged() tea.Msg { return dockToggleMsg{} }
 
 type phase int
 
@@ -78,10 +104,13 @@ type model struct {
 	// startup notes printed under the banner (bad theme or density names).
 	startNotes []string
 
-	width  int
+	width  int // column the transcript and live view use
 	height int
-	input  textarea.Model
-	phase  phase
+	// termWidth is the full terminal width; width is narrower while the
+	// dock is shown.
+	termWidth int
+	input     textarea.Model
+	phase     phase
 
 	cancel    context.CancelFunc
 	runStart  time.Time
@@ -165,14 +194,15 @@ func newModel(opts Options, width int) *model {
 	ta.Focus()
 	d, ok := parseDensity(opts.Density)
 	m := &model{
-		opts:    opts,
-		ag:      opts.Agent,
-		sess:    opts.Session,
-		pr:      newPrinter(),
-		md:      &mdRenderer{},
-		width:   width,
-		input:   ta,
-		density: d,
+		opts:      opts,
+		ag:        opts.Agent,
+		sess:      opts.Session,
+		pr:        newPrinter(),
+		md:        &mdRenderer{},
+		width:     width,
+		termWidth: width,
+		input:     ta,
+		density:   d,
 	}
 	if !ok {
 		m.startNotes = append(m.startNotes, fmt.Sprintf("unknown density %q; using compact (choose %s)", opts.Density, strings.Join(DensityNames(), " or ")))
@@ -199,10 +229,47 @@ func (m *model) Init() tea.Cmd {
 	for _, n := range m.startNotes {
 		m.emit(renderNotice(n))
 	}
-	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
-		return m.submit(p)
+	var dock tea.Cmd
+	if m.opts.Dock != nil {
+		dock = m.opts.Dock.Init()
+		m.relayout()
 	}
-	return textarea.Blink
+	if p := strings.TrimSpace(m.opts.InitialPrompt); p != "" {
+		return tea.Batch(dock, m.submit(p))
+	}
+	return tea.Batch(dock, textarea.Blink)
+}
+
+// dockShown reports whether the dock takes the right side of the screen.
+func (m *model) dockShown() bool {
+	return m.opts.Dock != nil && m.opts.Dock.Visible() && m.termWidth >= dockMinWidth
+}
+
+// dockWidth is the columns the dock gets, including its border.
+func (m *model) dockWidth() int {
+	return max(36, m.termWidth*9/20)
+}
+
+// relayout recomputes the live column after a resize or dock toggle.
+func (m *model) relayout() {
+	m.width = m.termWidth
+	if m.dockShown() {
+		m.width = m.termWidth - m.dockWidth() - 1
+	}
+	m.layoutInput()
+}
+
+// toggleDock shows or hides the dock (Ctrl+B).
+func (m *model) toggleDock() {
+	if m.opts.Dock == nil {
+		m.flash("No dock: start gta with --browser to get the live browser panel")
+		return
+	}
+	m.opts.Dock.SetVisible(!m.opts.Dock.Visible())
+	if m.opts.Dock.Visible() && m.termWidth < dockMinWidth {
+		m.flash(fmt.Sprintf("Terminal too narrow for the browser panel (needs %d columns)", dockMinWidth))
+	}
+	m.relayout()
 }
 
 // emit prints a block above the live view, separated by a blank line.
@@ -221,10 +288,23 @@ func (m *model) flash(s string) {
 // ---------- update ----------
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.opts.Dock == nil {
+		return m.update(msg)
+	}
+	dc := m.opts.Dock.Update(msg)
+	if _, ok := msg.(dockToggleMsg); ok {
+		m.relayout()
+		return m, dc
+	}
+	mm, cmd := m.update(msg)
+	return mm, tea.Batch(dc, cmd)
+}
+
+func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.layoutInput()
+		m.termWidth, m.height = msg.Width, msg.Height
+		m.relayout()
 		return m, nil
 	case tickMsg:
 		if m.phase == phaseIdle {
@@ -297,6 +377,9 @@ func (m *model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleApprovalKey(k)
 	}
 	switch k.String() {
+	case "ctrl+b":
+		m.toggleDock()
+		return m, nil
 	case "ctrl+c":
 		if m.phase == phaseRunning {
 			m.interrupt()
@@ -754,6 +837,50 @@ func (m *model) View() string {
 	if m.quitting {
 		return ""
 	}
+	left := m.columnView()
+	if !m.dockShown() {
+		return left
+	}
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	dw := m.dockWidth()
+	// Half-block cells hold two pixels, so a 16:10 page needs about
+	// width*10/32 rows, plus four for the border, title and status.
+	rows := min(max(10, dw*10/32+4), max(10, h-2))
+	return dockJoin(left, m.width, m.opts.Dock.View(dw, rows))
+}
+
+// dockJoin places right beside left (padded to leftWidth), bottom-aligned
+// so the prompt box stays on the terminal's last lines.
+func dockJoin(left string, leftWidth int, right string) string {
+	ll := strings.Split(left, "\n")
+	rl := strings.Split(right, "\n")
+	for len(ll) < len(rl) {
+		ll = append([]string{""}, ll...)
+	}
+	for len(rl) < len(ll) {
+		rl = append([]string{""}, rl...)
+	}
+	var sb strings.Builder
+	for i := range ll {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		l := ll[i]
+		if w := lipgloss.Width(l); w < leftWidth {
+			l += strings.Repeat(" ", leftWidth-w)
+		}
+		sb.WriteString(l)
+		sb.WriteByte(' ')
+		sb.WriteString(rl[i])
+	}
+	return sb.String()
+}
+
+// columnView is the live view, prompt and status in the left column.
+func (m *model) columnView() string {
 	var sections []string
 	if live := m.liveView(); live != "" {
 		sections = append(sections, live)

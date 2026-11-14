@@ -112,6 +112,7 @@ The token comes from `GTA_SERVE_TOKEN`, or is generated. See
 | `esc` | Close completions, or interrupt the running turn. |
 | `ctrl+c` | Interrupt the running turn; clear the input; twice within 2 s on an empty prompt: exit. |
 | `ctrl+d` | Exit when the prompt is empty. |
+| `ctrl+b` | Show or hide the live browser panel beside the prompt (needs `--browser`). |
 
 In an approval dialog:
 

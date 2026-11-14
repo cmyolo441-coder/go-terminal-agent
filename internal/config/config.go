@@ -77,6 +77,12 @@ type Config struct {
 	// too (they are always on for other providers). web_search needs
 	// BRAVE_API_KEY, TAVILY_API_KEY or SEARXNG_URL.
 	ClientWebTools bool `json:"client_web_tools"`
+	// Browser gives the agent a real Chromium it drives like a person
+	// (browser_* tools) and a live view of it beside the prompt. Needs
+	// Chrome or Chromium installed, or GTA_BROWSER pointing at one.
+	Browser bool `json:"browser"`
+	// BrowserHeadful opens a visible browser window instead of headless.
+	BrowserHeadful bool `json:"browser_headful"`
 
 	// Budget caps spend per session, day and month (USD). A managed
 	// policy can only tighten it.

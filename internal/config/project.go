@@ -67,6 +67,7 @@ var projectTighteners = map[string]func(dst *Config, p Config) bool{
 	"web_search":       offOnly(func(c *Config) *bool { return &c.WebSearch }),
 	"web_fetch":        offOnly(func(c *Config) *bool { return &c.WebFetch }),
 	"client_web_tools": offOnly(func(c *Config) *bool { return &c.ClientWebTools }),
+	"browser":          offOnly(func(c *Config) *bool { return &c.Browser }),
 	"lsp":              offOnly(func(c *Config) *bool { return &c.LSP }),
 	"redact_secrets":   onOnly(func(c *Config) *bool { return &c.RedactSecrets }),
 	"audit_log":        onOnly(func(c *Config) *bool { return &c.AuditLog }),
@@ -103,7 +104,7 @@ var projectTighteners = map[string]func(dst *Config, p Config) bool{
 // classified; unlisted keys are ignored too.
 var projectIgnored = []string{
 	"provider", "base_url", "fallback_models", "telemetry", "lsp_servers",
-	"secrets_allow", "audit_dir",
+	"secrets_allow", "audit_dir", "browser_headful",
 }
 
 // projectByLoad are handled by Load: project hooks and MCP servers are
