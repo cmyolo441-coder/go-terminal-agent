@@ -190,8 +190,8 @@ type segment struct {
 	from, to int
 	cmd      int    // span index of the command word, -1 if none
 	base     []byte // basename of the command word
-	pipedIn  bool // preceded by |
-	pipedOut bool // followed by |
+	pipedIn  bool   // preceded by |
+	pipedOut bool   // followed by |
 }
 
 // wrappers are words that run the next word as the command.
