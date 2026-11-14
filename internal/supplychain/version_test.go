@@ -76,7 +76,7 @@ func TestGoVersions(t *testing.T) {
 	if pv, err := ParsePseudoVersion("v0.0.0-20191109021931-daa7c04131f5"); err != nil || pv.Base != "" {
 		t.Errorf("base-less pseudo: %+v %v", pv, err)
 	}
-	for _, s := range []string{"v1.2.3", "v1.2.3-rc.1", "v1.2.3-0.2019-abc", "v1.0.0-20191109021931-daa7c04131f5", "v1.2.4-0.20191309021931-daa7c04131f5"} {
+	for _, s := range []string{"v1.2.3", "v1.2.3-rc.1", "v1.2.3-0.2019-abc", "v1.2.0-20191109021931-daa7c04131f5", "v1.2.4-0.20191309021931-daa7c04131f5"} {
 		if IsPseudoVersion(s) {
 			t.Errorf("%s is not a pseudo-version", s)
 		}
@@ -134,7 +134,7 @@ func TestNPMRanges(t *testing.T) {
 			t.Errorf("npm %q matches %s = %v, want %v", c.rng, c.v, got, c.want)
 		}
 	}
-	for _, bad := range []string{"^1.2.3.4", "1.x.3", "~>x", ">=a"} {
+	for _, bad := range []string{"^1.2.3.4", "1.x.3", "1.2.3 -", ">=a"} {
 		if _, err := ParseNPMRange(bad); err == nil {
 			t.Errorf("npm range %q accepted", bad)
 		}
