@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{TITLE}}</title>
+<style nonce="{{NONCE}}">
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+  --muted: #8b949e; --accent: #f5a623; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  --focus: #388bfd;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+header, footer { display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+  background: var(--panel); border-bottom: 1px solid var(--border); min-height: 40px; }
+footer { border-bottom: 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; transition: background .2s; }
+.dot.live { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.wait { background: var(--warn); }
+.dot.err { background: var(--err); }
+.title { font-weight: 600; white-space: nowrap; }
+.url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.stats { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+button { font: inherit; color: var(--text); background: #21262d; border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.on { background: var(--err); border-color: var(--err); color: #fff; }
+button[hidden] { display: none; }
+main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; position: relative; }
+canvas { max-width: 100%; max-height: 100%; width: auto; height: auto; background: #000;
+  border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,.5); outline: none; }
+canvas.control { box-shadow: 0 0 0 2px var(--err), 0 8px 32px rgba(0,0,0,.5); cursor: crosshair; }
+.placeholder { position: absolute; color: var(--muted); }
+.label { color: var(--accent); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+.spacer { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot" class="dot wait"></span>
+  <span class="title">{{TITLE}}</span>
+  <span id="url" class="url">about:blank</span>
+  <span id="stats" class="stats">– fps</span>
+  <button id="control" type="button" hidden title="Forward mouse and keyboard to the agent's browser">Take control</button>
+</header>
+<main>
+  <canvas id="view" width="1280" height="800" tabindex="0" aria-label="Live browser view"></canvas>
+  <div id="placeholder" class="placeholder">Connecting…</div>
+</main>
+<footer>
+  <span id="label" class="label"></span>
+  <span id="status"></span>
+  <span class="spacer"></span>
+  <span id="mode"></span>
+</footer>
+<script nonce="{{NONCE}}">
+"use strict";
+(() => {
+  const CONFIG = {{CONFIG}};
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") || "";
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("view"), ctx = canvas.getContext("2d", { alpha: false });
+  const dot = $("dot"), urlEl = $("url"), statsEl = $("stats"), labelEl = $("label");
+  const statusEl = $("status"), modeEl = $("mode"), placeholder = $("placeholder"), controlBtn = $("control");
+
+  // ---- state -------------------------------------------------------------
+  let pendingBitmap = null;     // newest decoded frame not yet painted
+  let currentBitmap = null;     // frame on the canvas
+  let decoding = false, queuedBlob = null;
+  let frameW = 0, frameH = 0, lastSeq = 0, lastCapture = 0;
+  let overlay = { cursor: null, highlight: null, label: "", url: "", status: "" };
+  const cursorPos = { x: 0, y: 0, init: false };
+  const fpsTimes = [];
+  let latency = 0, mode = "ws", ws = null, wsFailures = 0, wsEverOpened = false;
+  let mjpegImg = null, overlayPoll = 0, dirty = true, control = false, allowInput = !!CONFIG.allowInput;
+
+  const setState = (cls, text) => { dot.className = "dot " + cls; if (text !== undefined) statusEl.textContent = text; };
+
+  // ---- frame intake (latest wins at every stage) -------------------------
+  function acceptBlob(blob) {
+    if (decoding) { queuedBlob = blob; return; }
+    decoding = true;
+    createImageBitmap(blob).then((bmp) => {
+      if (pendingBitmap) pendingBitmap.close();
+      pendingBitmap = bmp; dirty = true;
+    }).catch(() => {}).finally(() => {
+      decoding = false;
+      if (queuedBlob) { const b = queuedBlob; queuedBlob = null; acceptBlob(b); }
+    });
+  }
+
+  function onBinary(buf) {
+    const dv = new DataView(buf);
+    if (buf.byteLength < 28 || dv.getUint8(0) !== 1) return;
+    const fmt = dv.getUint8(1) === 1 ? "image/png" : "image/jpeg";
+    const w = dv.getUint32(4), h = dv.getUint32(8);
+    const seq = Number(dv.getBigUint64(12));
+    const captured = dv.getFloat64(20);
+    if (seq && seq < lastSeq) return; // never go backwards
+    lastSeq = seq;
+    if (w && h) { frameW = w; frameH = h; }
+    if (captured > 0) { lastCapture = captured; latency = Math.max(0, Date.now() - captured); }
+    acceptBlob(new Blob([new Uint8Array(buf, 28)], { type: fmt }));
+  }
+
+  function applyOverlay(o) {
+    overlay = { cursor: o.cursor || null, highlight: o.highlight || null, label: o.label || "", url: o.url || "", status: o.status || "" };
+    urlEl.textContent = overlay.url || "about:blank";
+    urlEl.title = overlay.url;
+    labelEl.textContent = overlay.label ? "▶ " + overlay.label : "";
+    if (overlay.status) statusEl.textContent = overlay.status;
+    if (overlay.cursor && !cursorPos.init) { cursorPos.x = overlay.cursor.x; cursorPos.y = overlay.cursor.y; cursorPos.init = true; }
+    dirty = true;
+  }
+
+  // ---- WebSocket transport -----------------------------------------------
+  function wsURL() { return "ws://" + location.host + "/ws?token=" + encodeURIComponent(token); }
+
+  function connectWS() {
+    mode = "ws"; modeEl.textContent = "websocket";
+    setState("wait", "connecting…");
+    let opened = false;
+    try { ws = new WebSocket(wsURL()); } catch (e) { return fallbackOrRetry(); }
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => { opened = true; wsEverOpened = true; wsFailures = 0; setState("live", "live"); };
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== "string") { onBinary(ev.data); return; }
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      switch (m.t) {
+        case "hello": allowInput = !!m.allowInput; controlBtn.hidden = !allowInput; break;
+        case "overlay": applyOverlay(m); break;
+        case "control": setControl(!!m.on, false); break;
+        case "end": setState("err", "stream ended"); break;
+        case "error": statusEl.textContent = m.msg || "error"; break;
+      }
+    };
+    ws.onclose = () => {
+      ws = null;
+      if (control) setControl(false, false);
+      if (!opened) wsFailures++;
+      setState("err", "disconnected");
+      fallbackOrRetry();
+    };
+  }
+
+  function fallbackOrRetry() {
+    if (!wsEverOpened && wsFailures >= 3) { startMJPEG(); return; }
+    const delay = Math.min(5000, 250 * Math.pow(2, Math.min(wsFailures, 5)));
+    setTimeout(connectWS, delay);
+  }
+
+  // ---- MJPEG fallback ----------------------------------------------------
+  function startMJPEG() {
+    mode = "mjpeg"; modeEl.textContent = "mjpeg fallback";
+    controlBtn.hidden = true;
+    mjpegImg = new Image();
+    mjpegImg.decoding = "async";
+    mjpegImg.onload = () => { setState("live", "live"); dirty = true; };
+    mjpegImg.onerror = () => { setState("err", "stream unavailable"); setTimeout(startMJPEG, 2000); };
+    mjpegImg.src = "/mjpeg?token=" + encodeURIComponent(token) + "&t=" + Date.now();
+    clearInterval(overlayPoll);
+    overlayPoll = setInterval(() => {
+      fetch("/overlay?token=" + encodeURIComponent(token), { cache: "no-store" })
+        .then((r) => r.ok ? r.json() : null).then((o) => { if (o) applyOverlay(o); }).catch(() => {});
+    }, 250);
+  }
+
+  // ---- rendering ---------------------------------------------------------
+  function draw(now) {
+    let source = null, sw = 0, sh = 0;
+    if (pendingBitmap) {
+      if (currentBitmap) currentBitmap.close();
+      currentBitmap = pendingBitmap; pendingBitmap = null;
+      fpsTimes.push(now);
+      dirty = true;
+    }
+    if (mode === "mjpeg" && mjpegImg && mjpegImg.naturalWidth) {
+      source = mjpegImg; sw = mjpegImg.naturalWidth; sh = mjpegImg.naturalHeight; dirty = true;
+    } else if (currentBitmap) {
+      source = currentBitmap; sw = currentBitmap.width; sh = currentBitmap.height;
+    }
+    // Ease the cursor toward its target (critically damped feel).
+    if (overlay.cursor) {
+      const k = 0.35; // fraction of the remaining distance covered per frame
+      const dx = overlay.cursor.x - cursorPos.x, dy = overlay.cursor.y - cursorPos.y;
+      if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) { cursorPos.x += dx * k; cursorPos.y += dy * k; dirty = true; }
+      else { cursorPos.x = overlay.cursor.x; cursorPos.y = overlay.cursor.y; }
+    }
+    while (fpsTimes.length && now - fpsTimes[0] > 1000) fpsTimes.shift();
+    if (source && dirty) {
+      dirty = false;
+      placeholder.hidden = true;
+      if (canvas.width !== sw || canvas.height !== sh) { canvas.width = sw; canvas.height = sh; }
+      ctx.drawImage(source, 0, 0);
+      const fw = frameW || sw, fh = frameH || sh;
+      const sx = sw / fw, sy = sh / fh;
+      if (overlay.highlight) {
+        const h = overlay.highlight;
+        ctx.save();
+        ctx.fillStyle = "rgba(245,166,35,0.16)"; ctx.strokeStyle = "#f5a623"; ctx.lineWidth = Math.max(2, sw / 640);
+        ctx.fillRect(h.x * sx, h.y * sy, h.w * sx, h.h * sy);
+        ctx.strokeRect(h.x * sx, h.y * sy, h.w * sx, h.h * sy);
+        ctx.restore();
+      }
+      if (overlay.cursor) drawCursor(cursorPos.x * sx, cursorPos.y * sy, Math.max(18, sh / 36));
+      if (overlay.label) drawLabel(overlay.label, sw);
+    }
+    statsEl.textContent = fpsTimes.length + " fps" + (latency ? " · " + Math.round(latency) + " ms" : "") +
+      (frameW ? " · " + frameW + "×" + frameH : "");
+    requestAnimationFrame(draw);
+  }
+
+  function drawCursor(x, y, size) {
+    const s = size / 21;
+    const pts = [[0, 0], [0, 17], [4, 13], [7, 20], [9, 19], [6, 12], [11.5, 12]];
+    ctx.save();
+    ctx.beginPath();
+    pts.forEach(([px, py], i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, x + px * s, y + py * s));
+    ctx.closePath();
+    ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = Math.max(1, s * 1.2); ctx.strokeStyle = "#111"; ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawLabel(text, sw) {
+    const fs = Math.max(13, Math.round(sw / 90));
+    ctx.save();
+    ctx.font = "600 " + fs + "px ui-sans-serif, system-ui, sans-serif";
+    const pad = fs * 0.6, w = Math.min(ctx.measureText(text).width + pad * 2, sw - 2 * pad), h = fs + pad * 1.4;
+    ctx.fillStyle = "rgba(13,17,23,.82)";
+    ctx.beginPath(); ctx.roundRect(pad, pad, w, h, 6); ctx.fill();
+    ctx.fillStyle = "#f5a623"; ctx.textBaseline = "middle";
+    ctx.fillText(text, pad * 2, pad + h / 2, w - pad * 2);
+    ctx.restore();
+  }
+
+  // ---- interactive takeover ----------------------------------------------
+  function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+  function setControl(on, notify) {
+    control = on && allowInput;
+    controlBtn.classList.toggle("on", control);
+    controlBtn.textContent = control ? "Release control" : "Take control";
+    canvas.classList.toggle("control", control);
+    if (control) canvas.focus();
+    if (notify) send({ t: "control", on: control });
+  }
+  controlBtn.addEventListener("click", () => setControl(!control, true));
+
+  function toFrame(ev) {
+    const r = canvas.getBoundingClientRect();
+    const fw = frameW || canvas.width, fh = frameH || canvas.height;
+    return { x: (ev.clientX - r.left) * fw / r.width, y: (ev.clientY - r.top) * fh / r.height };
+  }
+  const buttons = ["left", "middle", "right", "back", "forward"];
+  let moveQueued = null;
+  canvas.addEventListener("mousemove", (ev) => {
+    if (!control) return;
+    const first = moveQueued === null;
+    moveQueued = toFrame(ev);
+    if (first) requestAnimationFrame(() => { if (moveQueued) send({ t: "mousemove", x: moveQueued.x, y: moveQueued.y }); moveQueued = null; });
+  });
+  for (const type of ["mousedown", "mouseup"]) {
+    canvas.addEventListener(type, (ev) => {
+      if (!control) return;
+      ev.preventDefault();
+      const p = toFrame(ev);
+      send({ t: type, x: p.x, y: p.y, button: buttons[ev.button] || "left", clicks: Math.min(Math.max(ev.detail, 1), 3) });
+    });
+  }
+  canvas.addEventListener("contextmenu", (ev) => { if (control) ev.preventDefault(); });
+  canvas.addEventListener("wheel", (ev) => {
+    if (!control) return;
+    ev.preventDefault();
+    const p = toFrame(ev);
+    const scale = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? canvas.height : 1;
+    send({ t: "wheel", x: p.x, y: p.y, dx: ev.deltaX * scale, dy: ev.deltaY * scale });
+  }, { passive: false });
+  const printable = (ev) => ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
+  const keyName = (ev) => {
+    const mods = [];
+    if (ev.ctrlKey && ev.key !== "Control") mods.push("Control");
+    if (ev.altKey && ev.key !== "Alt") mods.push("Alt");
+    if (ev.metaKey && ev.key !== "Meta") mods.push("Meta");
+    if (ev.shiftKey && ev.key !== "Shift" && ev.key.length > 1) mods.push("Shift");
+    return mods.concat([ev.key]).join("+");
+  };
+  canvas.addEventListener("keydown", (ev) => {
+    if (!control) return;
+    ev.preventDefault();
+    if (printable(ev)) send({ t: "text", text: ev.key });
+    else send({ t: "keydown", key: keyName(ev) });
+  });
+  canvas.addEventListener("keyup", (ev) => {
+    if (!control || printable(ev)) return;
+    ev.preventDefault();
+    send({ t: "keyup", key: keyName(ev) });
+  });
+  canvas.addEventListener("paste", (ev) => {
+    if (!control) return;
+    const text = ev.clipboardData && ev.clipboardData.getData("text");
+    if (text) { ev.preventDefault(); send({ t: "text", text: text.slice(0, 4096) }); }
+  });
+  document.addEventListener("visibilitychange", () => { dirty = true; });
+
+  controlBtn.hidden = !allowInput;
+  if (typeof WebSocket === "function") connectWS(); else startMJPEG();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
