@@ -317,8 +317,12 @@ func (ss *session) push(ev *Event, now int64) uint64 {
 func (s *Sentinel) detect(ss *session, ev *Event, in *Input, now int64, seq uint64) {
 	c := &s.cfg
 	action := ev.Kind.IsAction()
+	digest := ev.Digest
+	if digest == 0 && len(ev.Payload) > 0 && (ev.Kind == KindFileWrite || ev.Kind == KindToolResult) {
+		digest = fnv64b(ev.Payload)
+	}
 	if action && !c.Loop.Disabled {
-		s.detectLoop(ss, in, now, seq)
+		s.detectLoop(ss, in, digest, now, seq)
 	}
 	if !c.Rate.Disabled {
 		s.detectRate(ss, ev, now, seq)
@@ -330,10 +334,6 @@ func (s *Sentinel) detect(ss *session, ev *Event, in *Input, now int64, seq uint
 		s.detectDeletion(ss, in, now, seq)
 	}
 	if ev.Kind == KindFileWrite || ev.Kind == KindToolResult && ev.Digest != 0 {
-		digest := ev.Digest
-		if digest == 0 && len(ev.Payload) > 0 {
-			digest = fnv64b(ev.Payload)
-		}
 		if digest != 0 && !c.Oscillation.Disabled && ev.Target != "" {
 			s.detectOscillation(ss, in, digest, now, seq)
 		}

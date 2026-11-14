@@ -142,8 +142,8 @@ func TestDetectPhone(t *testing.T) {
 		{"phone: (415) 555-2671", []string{"(415) 555-2671"}},
 		{"mobile 98765 43210", []string{"98765 43210"}},
 		{"x+14155552671", nil},
-		{"+1 115 555 2671", nil},     // NANP area code
-		{"+28 1234 5678", nil},       // unassigned country code
+		{"+1 115 555 2671", nil},       // NANP area code
+		{"+28 1234 5678", nil},         // unassigned country code
 		{"+44 20 7946 0958 1234", nil}, // too long
 		{"1+2", nil},
 		{"version 4155552671", nil},

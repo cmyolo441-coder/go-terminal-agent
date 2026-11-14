@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func lastSegment(t *testing.T, dir string) string {
@@ -28,29 +27,28 @@ func appendTasks(t *testing.T, w *WAL, token uint64, n int, prefix string) {
 }
 
 func TestWALRoundTripAndTornTail(t *testing.T) {
-	dir := t.TempDir()
-	w, rec, err := OpenWAL(dir, WALOptions{SyncWrites: true})
-	if err != nil || len(rec.Tasks) != 0 {
-		t.Fatalf("open: %v %+v", err, rec)
-	}
-	appendTasks(t, w, 1, 10, "a")
-	if _, err := w.Append(1, opDelete, nil, "a3"); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
 	for name, tail := range map[string]string{
 		"partial line": `0badc0de {"seq":12,"tok":1,"op":"put","task":{"id":"zz"`,
 		"bad checksum": "00000000 {\"seq\":12,\"tok\":1,\"op\":\"del\",\"id\":\"a1\"}\n",
 		"garbage":      "\x00\x00\x00\x00\x00",
 	} {
 		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			w, rec, err := OpenWAL(dir, WALOptions{SyncWrites: true})
+			if err != nil || len(rec.Tasks) != 0 {
+				t.Fatalf("open: %v %+v", err, rec)
+			}
+			appendTasks(t, w, 1, 10, "a")
+			if _, err := w.Append(1, opDelete, nil, "a3"); err != nil {
+				t.Fatal(err)
+			}
+			w.Close()
 			seg := lastSegment(t, dir)
 			before, _ := os.Stat(seg)
 			f, _ := os.OpenFile(seg, os.O_WRONLY|os.O_APPEND, 0)
 			f.WriteString(tail)
 			f.Close()
-			w, rec, err := OpenWAL(dir, WALOptions{})
+			w, rec, err = OpenWAL(dir, WALOptions{})
 			if err != nil {
 				t.Fatalf("recovery failed: %v", err)
 			}
@@ -75,7 +73,6 @@ func TestWALRoundTripAndTornTail(t *testing.T) {
 			if err != nil || rec2.Tasks["new"+name[:3]] == nil {
 				t.Fatalf("reopen: %v", err)
 			}
-			w2.Append(1, opDelete, nil, "new"+name[:3])
 			w2.Close()
 		})
 	}
@@ -150,5 +147,4 @@ func TestWALIgnoresStaleLeaderRecords(t *testing.T) {
 	if rec.StaleRecords != 2 || rec.MaxToken != 2 {
 		t.Fatalf("stale %d, max token %d", rec.StaleRecords, rec.MaxToken)
 	}
-	_ = time.Second
 }

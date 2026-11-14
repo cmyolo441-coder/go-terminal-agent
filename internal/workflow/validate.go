@@ -505,7 +505,7 @@ func (b bitset) union(o bitset) {
 // computeAncestors fills every step's transitive dependency set. The graph
 // is known to be acyclic.
 func computeAncestors(c *compiled) {
-	n := len(c.steps)
+	n := len(c.spec.Steps) // indexes are spec positions; c.steps may omit invalid ones
 	done := make([]bool, n)
 	var visit func(cs *compiledStep)
 	visit = func(cs *compiledStep) {

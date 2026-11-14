@@ -93,11 +93,15 @@ type loopState struct {
 	epoch uint32
 }
 
-func (e *engine) detectLoop(ss *session, in *Input, now int64, seq uint64) {
+func (e *engine) detectLoop(ss *session, in *Input, digest uint64, now int64, seq uint64) {
 	c := &e.cfg.Loop
 	st := &ss.loop
 	write := in.Kind == KindFileWrite || in.Kind == KindFileDelete
 	fp := fingerprint(in.Tool, in.Lower)
+	if write {
+		// A write is identical only if it writes the same content.
+		fp = fnvAddU64(fp, digest)
+	}
 	sim, toks := simhash(in.Tool, in.Lower)
 	cut := now - int64(c.Window)
 

@@ -60,11 +60,11 @@ type LoopConfig struct {
 	// NearRepeats is the number of near-identical actions that is a loop
 	// (default 6, severity low).
 	NearRepeats int
-	// MaxHamming is the SimHash distance under which two actions are
-	// near-identical (default 3).
+	// MaxHamming is the SimHash distance at or under which two actions are
+	// near-identical (default 10 of 64 bits; unrelated inputs average 32).
 	MaxHamming int
 	// MinTokens is the number of tokens an action needs for near-duplicate
-	// detection; SimHash is unreliable on very short inputs (default 5).
+	// detection; SimHash is unreliable on very short inputs (default 8).
 	MinTokens int
 	// KeepAcrossWrites counts repeats across file writes. By default a
 	// write or delete resets the comparison, since re-running a test after
@@ -277,8 +277,8 @@ func (c Config) withDefaults() (Config, error) {
 	defInt(&l.Repeats, 4)
 	defInt(&l.RepeatsHigh, 8)
 	defInt(&l.NearRepeats, 6)
-	defInt(&l.MaxHamming, 3)
-	defInt(&l.MinTokens, 5)
+	defInt(&l.MaxHamming, 10)
+	defInt(&l.MinTokens, 8)
 	if l.RepeatsHigh < l.Repeats {
 		return c, errors.New("sentinel: Loop.RepeatsHigh < Loop.Repeats")
 	}

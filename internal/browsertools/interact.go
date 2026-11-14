@@ -737,7 +737,7 @@ func (s *Session) fillText(ctx context.Context, d Driver, t Target, text string,
 		return e, p, "", err
 	}
 	note := ""
-	if !st.Masked && !strings.Contains(st.Value, strings.TrimRight(text, "\n")) {
+	if !st.Masked && !strings.Contains(stripBreaks(st.Value), stripBreaks(text)) {
 		note = " (the field reformatted or limited the input)"
 	}
 	return e, p, fmt.Sprintf("%s value=%s%s", e.label(), describeValue(st), note), nil
@@ -1487,4 +1487,15 @@ func firstLineOf(s string, n int) string {
 		s = string([]rune(s)[:n-1]) + "…"
 	}
 	return s
+}
+
+// stripBreaks drops line breaks and tabs, which type as Enter and Tab key
+// presses and may or may not end up in a field's value.
+func stripBreaks(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return -1
+		}
+		return r
+	}, s)
 }

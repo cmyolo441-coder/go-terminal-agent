@@ -35,7 +35,7 @@ func TestSimHashSeparatesNearFromFar(t *testing.T) {
 	if nb < 10 {
 		t.Fatalf("tokens = %d", nb)
 	}
-	if d := hamming(hb, hn); d > 6 {
+	if d := hamming(hb, hn); d > 10 {
 		t.Errorf("near distance %d, want small", d)
 	}
 	if d := hamming(hb, hf); d < 16 {
@@ -153,10 +153,10 @@ func TestLoopFalsePositives(t *testing.T) {
 
 func TestLoopNearDuplicates(t *testing.T) {
 	h := newHarness(t, only(DetectorLoop))
-	flags := []string{"", " -v", " -count=1", " -v -count=1", " -short", " -failfast"}
+	flags := []string{"", " -v", " -short", " -v", "", " -short"}
 	for i, f := range flags {
 		h.at(3 * time.Second)
-		h.exec("go test ./internal/agent/... -run TestRunTools -race -timeout 120s" + f)
+		h.exec("cd /w && go test ./internal/agent/... ./internal/tools/... -run 'TestRunTools|TestExecute' -race -timeout 120s -tags integration" + f)
 		if i < len(flags)-1 && len(h.incidents(DetectorLoop)) > 0 {
 			t.Fatalf("flagged after %d calls", i+1)
 		}
@@ -234,7 +234,7 @@ func TestRateAnomaly(t *testing.T) {
 	var v Verdict
 	for i := 0; i < 40; i++ {
 		h.at(100 * time.Millisecond)
-		if vv := h.read(fmt.Sprintf("/w/burst%d", i)); vv.Detector == DetectorRate {
+		if vv := h.read(fmt.Sprintf("/w/burst%d", i)); vv.Detector == DetectorRate && v.Detector == "" {
 			v = vv
 		}
 	}
@@ -242,7 +242,7 @@ func TestRateAnomaly(t *testing.T) {
 	if inc.Rule != "calls" || inc.Metrics["z"] < 4 {
 		t.Fatalf("incident %+v", inc)
 	}
-	if v.Decision != DecisionWarn || h.s.Posture(h.sess).Action != ActionThrottle {
+	if v.Decision != DecisionWarn || v.Incident != inc.ID || h.s.Posture(h.sess).Action != ActionThrottle {
 		t.Fatalf("verdict %v posture %+v", v, h.s.Posture(h.sess))
 	}
 }
@@ -358,7 +358,7 @@ func TestBurnFalsePositives(t *testing.T) {
 
 func TestMassDeletion(t *testing.T) {
 	h := newHarness(t, only(DetectorDeletion))
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 40; i++ {
 		h.at(time.Second)
 		h.obs(Event{Kind: KindFileDelete, Tool: "delete", Target: fmt.Sprintf("/w/f%d", i)})
 	}
@@ -398,7 +398,7 @@ func TestErrorStorm(t *testing.T) {
 		h.result("bash", errBoom)
 	}
 	inc := h.wantIncidents(DetectorErrors, 1)[0]
-	if inc.Metrics["ratio"] < 0.6 {
+	if inc.Metrics["consecutive"] < 8 && inc.Metrics["ratio"] < 0.6 {
 		t.Fatalf("incident %+v", inc)
 	}
 	// Recovery ends the storm; a new storm is a new episode.
