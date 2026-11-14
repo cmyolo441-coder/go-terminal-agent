@@ -144,6 +144,9 @@ func PathUnder(dirs ...string) PathPredicate {
 		ps[i] = pair{lead: []byte(d + "/"), mid: []byte("/" + d + "/")}
 	}
 	return func(p []byte) bool {
+		if bytes.IndexByte(p, '/') < 0 {
+			return false // both forms need a slash
+		}
 		for _, x := range ps {
 			if bytes.HasPrefix(p, x.lead) || bytes.Contains(p, x.mid) {
 				return true
@@ -182,7 +185,17 @@ func BasePrefix(prefixes ...string) PathPredicate {
 // HasSuffix matches paths ending in one of suffixes.
 func HasSuffix(suffixes ...string) PathPredicate {
 	ls := lowerAll(suffixes)
+	var last [256]bool
+	for _, n := range ls {
+		if len(n) == 0 {
+			return func([]byte) bool { return true }
+		}
+		last[n[len(n)-1]] = true
+	}
 	return func(p []byte) bool {
+		if len(p) == 0 || !last[p[len(p)-1]] {
+			return false
+		}
 		for _, n := range ls {
 			if bytes.HasSuffix(p, n) {
 				return true
@@ -226,7 +239,16 @@ func Touches(pred PathPredicate) Matcher {
 		if in.isFile {
 			return pred(in.Lower)
 		}
-		return in.shell().anyWord(func(w []byte) bool { return pred(w) || pred(fileOperand(w)) })
+		return in.shell().anyWord(func(w []byte) bool {
+			if w[0] == '-' && bytes.IndexByte(w, '=') < 0 && bytes.IndexByte(w, '@') < 0 {
+				return false // a plain flag
+			}
+			if pred(w) {
+				return true
+			}
+			op := fileOperand(w)
+			return len(op) != len(w) && len(op) > 0 && pred(op)
+		})
 	})
 }
 
