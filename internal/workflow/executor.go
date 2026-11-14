@@ -199,10 +199,14 @@ func Idempotent(ex Executor, store IdempotencyStore) Executor {
 		if err != nil {
 			return nil, err
 		}
-		if err := store.Save(ctx, sc.IdempotencyKey, out); err != nil {
+		norm, err := normalizeMap(out)
+		if err != nil {
+			return nil, Permanent(fmt.Errorf("outputs are not JSON values: %w", err))
+		}
+		if err := store.Save(ctx, sc.IdempotencyKey, norm); err != nil {
 			return nil, Transient(fmt.Errorf("idempotency store: %w", err))
 		}
-		return out, nil
+		return norm, nil
 	})
 }
 

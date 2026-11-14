@@ -325,6 +325,7 @@ func ExecShellRunner(ctx context.Context, sc ShellCommand) (ShellResult, error) 
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", sc.Command)
 	}
 	cmd.Dir = sc.Dir
+	setProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
 	if len(sc.Env) > 0 {
 		env := os.Environ()

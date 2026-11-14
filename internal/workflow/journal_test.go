@@ -168,7 +168,7 @@ func TestTimelineRender(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	want := []string{
-		"step            |0s       2.00s       4.00s|",
+		"step            |0s    2.00s    4.00s|",
 		"fetch           |#####...............|   1.00s  succeeded",
 		"build[os=linux] |.....##########.....|   2.00s  succeeded (2 attempts)",
 		"deploy          |...............#####|   1.00s  failed, compensation succeeded",

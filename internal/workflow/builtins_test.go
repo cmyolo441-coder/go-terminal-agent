@@ -39,7 +39,13 @@ func TestShellExecutor(t *testing.T) {
 	if soft, _ := res.Step("soft"); soft.Status != StepSucceeded || soft.Outputs["exit_code"] != 2.0 {
 		t.Fatalf("soft = %+v", soft)
 	}
-	if c := got[0]; c.Dir != "/tmp" || c.Stdin != "in" || c.IdempotencyKey == "" {
+	var c ShellCommand
+	for _, g := range got {
+		if g.Command == "echo hi" {
+			c = g
+		}
+	}
+	if c.Dir != "/tmp" || c.Stdin != "in" || c.IdempotencyKey == "" {
 		t.Fatalf("command = %+v", c)
 	}
 }
