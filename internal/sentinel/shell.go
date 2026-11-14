@@ -26,16 +26,23 @@ type span struct {
 	kind spanKind
 }
 
+const maxSegs = 32
+
 type shellLine struct {
-	b     []byte
-	spans [maxSpans]span
-	n     int
+	b        []byte
+	spans    [maxSpans]span
+	n        int
+	segs     [maxSegs]segment
+	nseg     int
+	segsDone bool
 }
 
 // lex splits b into spans. Words beyond maxSpans are dropped.
 func (l *shellLine) lex(b []byte) {
 	l.b = b
 	l.n = 0
+	l.nseg = 0
+	l.segsDone = false
 	i := 0
 	for i < len(b) && l.n < maxSpans {
 		c := b[i]
@@ -181,7 +188,8 @@ func (l *shellLine) text(sp span) []byte { return l.b[sp.s:sp.e] }
 // segment is a range [from, to) of spans forming one simple command.
 type segment struct {
 	from, to int
-	cmd      int  // span index of the command word, -1 if none
+	cmd      int    // span index of the command word, -1 if none
+	base     []byte // basename of the command word
 	pipedIn  bool // preceded by |
 	pipedOut bool // followed by |
 }
@@ -192,33 +200,46 @@ var wrappers = [...]string{"sudo", "doas", "env", "command", "exec", "nohup", "t
 // segments calls fn for each simple command in the line, stopping early
 // when fn returns true, and reports whether fn did.
 func (l *shellLine) segments(fn func(seg segment) bool) bool {
+	if !l.segsDone {
+		l.splitSegments()
+	}
+	for i := 0; i < l.nseg; i++ {
+		if fn(l.segs[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitSegments computes the simple commands once per line; every matcher
+// then reuses them.
+func (l *shellLine) splitSegments() {
+	l.segsDone = true
+	l.nseg = 0
 	seg := segment{cmd: -1}
-	flush := func(to int, pipedOut bool) bool {
+	flush := func(to int, pipedOut bool) {
 		seg.to = to
 		seg.pipedOut = pipedOut
-		if seg.to > seg.from {
+		if seg.to > seg.from && l.nseg < maxSegs {
 			seg.cmd = l.commandWord(seg.from, seg.to)
-			if fn(seg) {
-				return true
+			if seg.cmd >= 0 {
+				seg.base = baseOf(l.text(l.spans[seg.cmd]))
 			}
+			l.segs[l.nseg] = seg
+			l.nseg++
 		}
-		return false
 	}
 	for i := 0; i < l.n; i++ {
 		switch l.spans[i].kind {
 		case spanSep:
-			if flush(i, false) {
-				return true
-			}
+			flush(i, false)
 			seg = segment{from: i + 1, cmd: -1}
 		case spanPipe:
-			if flush(i, true) {
-				return true
-			}
+			flush(i, true)
 			seg = segment{from: i + 1, cmd: -1, pipedIn: true}
 		}
 	}
-	return flush(l.n, false)
+	flush(l.n, false)
 }
 
 // commandWord finds the command word in spans [from, to), skipping
@@ -269,9 +290,8 @@ func (l *shellLine) cmdIs(seg segment, names ...string) bool {
 	if seg.cmd < 0 {
 		return false
 	}
-	base := baseOf(l.text(l.spans[seg.cmd]))
 	for _, n := range names {
-		if string(base) == n {
+		if string(seg.base) == n {
 			return true
 		}
 	}

@@ -297,7 +297,7 @@ func (e retryAfterError) Unwrap() error { return e.HTTPError }
 
 func (e *HTTPEmbedder) backoff(attempt int, lastErr error) time.Duration {
 	var ra retryAfterError
-	if errors.As(lastErr, &ra) && ra.after > 0 {
+	if errors.As(lastErr, &ra) {
 		return min(ra.after, e.cfg.MaxBackoff)
 	}
 	ceil := e.cfg.InitialBackoff << min(attempt-1, 20)

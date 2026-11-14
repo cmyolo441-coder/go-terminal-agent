@@ -15,7 +15,9 @@ import (
 
 // findChromium returns a local Chromium or Chrome binary, or "".
 func findChromium() string {
-	for _, p := range []string{"/opt/pw-browsers/chromium-1243/chrome-linux/chrome", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"} {
+	cands, _ := filepath.Glob("/opt/pw-browsers/chromium-*/chrome-linux*/chrome")
+	cands = append(cands, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser")
+	for _, p := range cands {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p
 		}
@@ -39,6 +41,7 @@ const itPage = `<!doctype html><html><head><title>IT Page</title></head><body>
 <select id="country"><option value="us">United States</option><option value="de">Germany</option></select>
 <button type="submit" disabled>Submit</button>
 <div role="button" aria-expanded="false" tabindex="0">Menu</div>
+<button type="button">Save</button><button type="button">Save</button>
 </form>
 <div style="display:none"><button>Hidden</button></div>
 <div id="host"></div>
@@ -58,7 +61,8 @@ window.addEventListener('load', () => setTimeout(() => {
   r.snap = AG("snapshot", [{}]);
   const email = r.snap.nodes.find(n => n.name === "Email").ref;
   const combo = r.snap.nodes.find(n => n.role === "combobox").ref;
-  r.ambiguous = AG("locate", [{text: "in"}]);
+  r.ambiguous = AG("locate", [{text: "save"}]);
+  r.unique = AG("locate", [{text: "remember"}]);
   r.select = AG("select", [combo, ["germany"], "auto"]);
   r.badSelect = AG("select", [combo, ["france"], "auto"]);
   r.overlay = AG("hit", [email, 10, 10]);
@@ -89,7 +93,7 @@ func TestAgentScriptInChromium(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "--headless=new", "--no-sandbox", "--disable-gpu", "--user-data-dir="+filepath.Join(dir, "profile"),
+	cmd := exec.CommandContext(ctx, bin, "--headless=new", "--no-sandbox", "--disable-gpu",
 		"--virtual-time-budget=3000", "--window-size=1280,720", "--dump-dom", "file://"+page)
 	out, err := cmd.Output()
 	if err != nil {
@@ -102,6 +106,7 @@ func TestAgentScriptInChromium(t *testing.T) {
 	var r struct {
 		Snap        Snapshot       `json:"snap"`
 		Ambiguous   map[string]any `json:"ambiguous"`
+		Unique      element        `json:"unique"`
 		Select      map[string]any `json:"select"`
 		BadSelect   map[string]any `json:"badSelect"`
 		Overlay     map[string]any `json:"overlay"`
@@ -130,6 +135,9 @@ func TestAgentScriptInChromium(t *testing.T) {
 	}
 	if r.Ambiguous["error"] == nil {
 		t.Errorf("ambiguous text match not refused: %v", r.Ambiguous)
+	}
+	if r.Unique.Role != "checkbox" || r.Unique.Name != "Remember me" || !r.Unique.Checkable {
+		t.Errorf("text match via label = %+v", r.Unique)
 	}
 	if sel, _ := r.Select["selected"].([]any); len(sel) != 1 || sel[0] != "Germany" {
 		t.Errorf("select = %v", r.Select)

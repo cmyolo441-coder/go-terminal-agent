@@ -490,8 +490,10 @@ func (r *run) schedule() {
 		}
 		select {
 		case res := <-r.results:
+			r.noticeInterrupt()
 			r.handleResult(res)
 		case st := <-r.wakeups:
+			r.noticeInterrupt()
 			r.handleWakeup(st)
 		case <-ctxDone:
 			ctxDone = nil
@@ -518,6 +520,15 @@ func (r *run) schedule() {
 				return
 			}
 		}
+	}
+}
+
+// noticeInterrupt applies a parent cancellation before a result is
+// handled: the result may have been caused by it and must then be treated
+// as an interruption, not a step failure or cancellation.
+func (r *run) noticeInterrupt() {
+	if !r.interrupted && r.ctx.Err() != nil {
+		r.interrupt()
 	}
 }
 

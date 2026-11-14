@@ -117,12 +117,20 @@ func fingerprint(tool string, lower []byte) uint64 {
 // different argument" from "same command, one extra flag". Similar inputs
 // have hashes a small Hamming distance apart.
 func simhash(tool string, lower []byte) (uint64, int) {
-	var acc [64]int32
+	// Bit-sliced accumulation: lane j of acc[k] (16 bits each) counts how
+	// many features had bit 4k+j set, so a feature costs 16 additions
+	// instead of 64. maxFeatures keeps the lanes from overflowing.
+	const maxFeatures = 1 << 14
+	var acc [16]uint64
+	features := 0
 	add := func(h uint64) {
+		if features == maxFeatures {
+			return
+		}
+		features++
 		h = mix64(h)
-		for b := 0; b < 64; b++ {
-			// +1 for a set bit, -1 for a clear one, without a branch.
-			acc[b] += int32(h>>b&1)<<1 - 1
+		for k := 0; k < 16; k++ {
+			acc[k] += nibbleSpread[h>>(4*k)&0xf]
 		}
 	}
 	prev := fnv64(tool)
@@ -146,12 +154,27 @@ func simhash(tool string, lower []byte) (uint64, int) {
 		}
 	}
 	var out uint64
-	for b := 0; b < 64; b++ {
-		if acc[b] > 0 {
-			out |= 1 << b
+	for k := 0; k < 16; k++ {
+		for j := 0; j < 4; j++ {
+			// Majority vote: more features had the bit set than clear.
+			if 2*int(acc[k]>>(16*j)&0xffff) > features {
+				out |= 1 << (4*k + j)
+			}
 		}
 	}
 	return out, n
 }
+
+// nibbleSpread maps a 4-bit value to four 16-bit lanes holding its bits.
+var nibbleSpread = func() (t [16]uint64) {
+	for v := range t {
+		for j := 0; j < 4; j++ {
+			if v>>j&1 == 1 {
+				t[v] |= 1 << (16 * j)
+			}
+		}
+	}
+	return t
+}()
 
 func hamming(a, b uint64) int { return bits.OnesCount64(a ^ b) }

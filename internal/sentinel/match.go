@@ -155,15 +155,13 @@ func PathUnder(dirs ...string) PathPredicate {
 
 // BaseIn matches paths whose basename is one of names.
 func BaseIn(names ...string) PathPredicate {
-	ls := lowerAll(names)
+	set := make(map[string]struct{}, len(names))
+	for _, n := range lowerAll(names) {
+		set[string(n)] = struct{}{}
+	}
 	return func(p []byte) bool {
-		b := baseOf(p)
-		for _, n := range ls {
-			if bytes.Equal(b, n) {
-				return true
-			}
-		}
-		return false
+		_, ok := set[string(baseOf(p))] // no allocation for map lookups
+		return ok
 	}
 }
 
