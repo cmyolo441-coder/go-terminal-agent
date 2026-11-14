@@ -19,7 +19,8 @@ type AhoCorasick struct {
 	classes  [256]uint16
 	nclasses int
 
-	// dfa[s*nclasses+c] is the next state; nil in fallback mode.
+	// dfa[s*nclasses+c] is the next state's row offset (next*nclasses),
+	// bit-inverted (negative) when that state emits; nil in fallback mode.
 	dfa []int32
 
 	// Trie edges for fallback mode, sorted by class.
@@ -211,6 +212,14 @@ func (a *AhoCorasick) buildDFA(bfs []int32) {
 			row[e.class] = e.next
 		}
 	}
+	// Encode entries as row offsets with the emit flag in the sign.
+	for i, nx := range a.dfa {
+		v := nx * int32(nc)
+		if a.emits[nx] {
+			v = ^v
+		}
+		a.dfa[i] = v
+	}
 	a.edges = nil
 }
 
@@ -230,11 +239,16 @@ func (a *AhoCorasick) Iterate(text string, fn func(ACMatch) bool) {
 		return
 	}
 	if a.dfa != nil {
-		dfa, nc, cls, emits := a.dfa, a.nclasses, &a.classes, a.emits
-		s := int32(0)
+		dfa, nc, cls := a.dfa, a.nclasses, &a.classes
+		off := int32(0)
 		for i := 0; i < len(text); i++ {
-			s = dfa[int(s)*nc+int(cls[text[i]])]
-			if emits[s] && !a.report(s, i+1, fn) {
+			x := dfa[int(off)+int(cls[text[i]])]
+			if x >= 0 {
+				off = x
+				continue
+			}
+			off = ^x
+			if !a.report(off/int32(nc), i+1, fn) {
 				return
 			}
 		}

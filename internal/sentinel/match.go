@@ -228,8 +228,20 @@ func Touches(pred PathPredicate) Matcher {
 		if in.isFile {
 			return pred(in.Lower)
 		}
-		return in.shell().anyWord(func(w []byte) bool { return pred(w) })
+		return in.shell().anyWord(func(w []byte) bool { return pred(w) || pred(fileOperand(w)) })
 	})
+}
+
+// fileOperand strips the option syntax around a file name in a word:
+// --data-binary=@.env, -d@secrets.json, @file → the file name.
+func fileOperand(w []byte) []byte {
+	if i := bytes.IndexByte(w, '='); i >= 0 && w[0] == '-' {
+		w = w[i+1:]
+	}
+	if i := bytes.IndexByte(w, '@'); i >= 0 && (i == 0 || w[0] == '-') {
+		w = w[i+1:]
+	}
+	return w
 }
 
 // Writes matches a file write or delete whose path satisfies pred, or a
