@@ -24,6 +24,7 @@ Flags must come before the prompt words.
 | `-c`, `--continue` | off | Continue the most recent session in this workspace. |
 | `--cwd <dir>` | current directory | Workspace root. |
 | `--web` | off | Turn on Anthropic's server-side `web_search` and `web_fetch`. |
+| `--browser` | off | Give the agent a real Chromium it drives like a person (`browser_*` tools) and dock a live view of it beside the prompt. Same as `"browser": true` in config. See [Agent browser](#agent-browser). |
 | `--max-turns <n>` | config, 200 | Maximum model calls per prompt. |
 | `--no-thinking` | off | Hide reasoning summaries. |
 | `--provider <name>` | config, `anthropic` | `anthropic`, `openai`, `openrouter`, `ollama`, `gemini`, `groq`, `deepseek`, `together`, `lmstudio`, `vllm`, `nvidia`. |
@@ -175,6 +176,7 @@ loaded.
 | `/sandbox` | How shell commands are sandboxed. | `/sandbox` |
 | `/provider` | Active provider, key variable, URL and known models. | `/provider` |
 | `/plugins [reload]` | List plugins, problems and ignored project plugins, or reload from disk. New plugin commands need a restart; tools reload at once. | `/plugins reload` |
+| `/browser [on\|off\|web\|control\|open <url>\|log]` | Agent browser (with `--browser`): show or hide the docked live view, open the full-resolution live viewer in a web page (`control` also lets you take over mouse and keyboard), navigate, or list the agent's browser actions. | `/browser open example.com` |
 
 ### Autopilot
 
@@ -221,3 +223,42 @@ What the model can call. `/tools` shows the live list.
 | `web_fetch`, `web_search` | read | Client-side; non-Anthropic providers, or `client_web_tools`. |
 | `mcp__<server>__<tool>` | exec | From MCP servers. |
 | `plugin__<plugin>__<tool>` | from the manifest | From plugins. |
+| `browser_snapshot`, `browser_extract`, `browser_wait`, `browser_hover`, `browser_scroll`, `browser_screenshot` | read | With `--browser`. `browser_screenshot` with a `path` is a write inside the workspace. |
+| `browser_navigate`, `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select`, `browser_check`, `browser_back`, `browser_forward`, `browser_reload`, `browser_eval` | exec | With `--browser`; ask like shell commands do. |
+
+## Agent browser
+
+`gta --browser` (or `"browser": true` in your user config) gives the agent a
+real Chromium. It is launched on the first `browser_*` call (headless unless
+`"browser_headful": true`), at a 1280×800 viewport, with a fresh temporary
+profile that is deleted on exit. GTA finds Chrome, Chromium or Edge in the
+usual install locations, Playwright's browser cache, or `PATH`;
+`GTA_BROWSER=/path/to/chrome` overrides the search.
+
+**How the agent sees and acts.** `browser_snapshot` returns an outline of the
+page's visible, meaningful elements (including open shadow roots and
+same-origin iframes), each with a ref such as `[e12] textbox "Email"
+(required)`. Actions target an element by `ref`, CSS `selector` or visible
+`match_text`. Every pointer action scrolls the element into view, moves the
+cursor along a curved path timed by Fitts' law, checks with
+`elementFromPoint` that nothing (a cookie banner, a modal) covers the point,
+then presses and releases. Typing goes key by key at a natural pace. Each
+action returns a short summary of what changed on the page. Only `http`,
+`https`, `about:blank` and files inside the workspace can be opened;
+`javascript:` and `data:` URLs are refused.
+
+**Live view beside the prompt.** The browser panel is docked to the right of
+the prompt and streams the page as it changes (Chrome's screencast, newest
+frame wins, so it never lags behind), with the agent's cursor and current
+action drawn on top. `Ctrl+B` or `/browser on|off` shows or hides it; it needs
+a terminal at least 90 columns wide. It is drawn with Unicode half-blocks in
+24-bit colour (256 colours when `COLORTERM` lacks truecolor), so it works in
+any modern terminal without graphics support.
+
+**Full-resolution viewer.** `/browser web` starts a viewer on `127.0.0.1`
+with a random 256-bit token in the URL and prints the link; open it in any
+browser for a smooth, full-resolution live view over a WebSocket (MJPEG
+fallback). `/browser control` does the same and adds a "Take control" switch
+that forwards your mouse and keyboard to the page, for example to solve a
+login step yourself. The viewer refuses other hosts and origins, so other
+websites can't read or drive it.
