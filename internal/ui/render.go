@@ -54,6 +54,41 @@ func toolHeader(c *tools.Call, ok bool) string {
 	return h
 }
 
+// toolLine is the focus-density rendering of a finished call: a ✓ or ✗,
+// then the command itself for shell calls (as typed, clipped with …) or
+// the tool and its target, and a +/− stat for edits.
+func toolLine(c *tools.Call, output string, err error, width int) string {
+	mark := sGreen.Render(gCheck)
+	if err != nil {
+		mark = sRed.Render(gCross)
+	}
+	avail := max(20, width-4)
+	var body string
+	switch c.Tool {
+	case "bash":
+		body = sText.Render(oneLine(c.Command, avail))
+	default:
+		name := displayName(c.Tool)
+		arg := toolArg(c)
+		stat := ""
+		if c.Tool == "write_file" || c.Tool == "edit_file" {
+			add, del := diffStat(c.Preview)
+			stat = " " + sGreen.Render(fmt.Sprintf("+%d", add)) + " " + sRed.Render(fmt.Sprintf("−%d", del))
+		}
+		room := avail - runewidth.StringWidth(name) - 1 - lipgloss.Width(stat)
+		body = sBold.Render(name)
+		if arg != "" && room > 4 {
+			body += " " + sMuted.Render(oneLine(arg, room))
+		}
+		body += stat
+	}
+	line := mark + " " + body
+	if err != nil {
+		line += "\n" + resultBlock([]string{sRed.Render(oneLine(err.Error(), max(20, width-8)))})
+	}
+	return line
+}
+
 // resultLines renders the indented result under a tool header.
 func resultBlock(lines []string) string {
 	if len(lines) == 0 {
@@ -73,6 +108,12 @@ func resultBlock(lines []string) string {
 // renderToolDone renders a finished tool call with its result, collapsed
 // or expanded according to the layout density.
 func renderToolDone(c *tools.Call, output string, err error, width int, d density) string {
+	if c.Tool == "todo_write" {
+		return "" // the task list renders on its own
+	}
+	if d.oneLine {
+		return toolLine(c, output, err, width)
+	}
 	head := toolHeader(c, err == nil)
 	inner := width - 6
 	if inner < 20 {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -76,7 +77,7 @@ func TestToolOutputDensity(t *testing.T) {
 }
 
 func TestParseDensity(t *testing.T) {
-	for in, want := range map[string]string{"": "compact", "Compact": "compact", "expanded": "expanded", "full": "expanded"} {
+	for in, want := range map[string]string{"": "focus", "minimal": "focus", "Compact": "compact", "expanded": "expanded", "full": "expanded"} {
 		if d, ok := parseDensity(in); !ok || d.name != want {
 			t.Errorf("parseDensity(%q) = %q, %v", in, d.name, ok)
 		}
@@ -102,7 +103,26 @@ func TestDensityCommand(t *testing.T) {
 	if m.density.name != DensityCompact {
 		t.Fatal("bad density changed the setting")
 	}
-	if bad := newModel(Options{Density: "bogus"}, 80); bad.density.name != DensityCompact || len(bad.startNotes) != 1 {
+	if bad := newModel(Options{Density: "bogus"}, 80); bad.density.name != DensityFocus || len(bad.startNotes) != 1 {
 		t.Fatalf("bad option: %q %v", bad.density.name, bad.startNotes)
+	}
+}
+
+func TestFocusDensityOneLine(t *testing.T) {
+	ok := &tools.Call{Tool: "bash", Command: "python3 -m pip --version || true; pip3 --version || true; python3 -c 'import requests'"}
+	got := stripANSI(renderToolDone(ok, "line1\nline2\nline3", nil, 60, densityFocus))
+	if strings.Contains(got, "\n") || !strings.HasPrefix(got, "✓ python3 -m pip") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("focus bash = %q", got)
+	}
+	bad := stripANSI(renderToolDone(ok, "", errors.New("exit status 1"), 60, densityFocus))
+	if !strings.HasPrefix(bad, "✗ ") || !strings.Contains(bad, "exit status 1") {
+		t.Fatalf("focus failure = %q", bad)
+	}
+	edit := &tools.Call{Tool: "edit_file", Summary: "Edit main.go", Preview: "--- a\n+++ b\n@@\n-old\n+new\n+more\n"}
+	if e := stripANSI(renderToolDone(edit, "updated", nil, 80, densityFocus)); !strings.Contains(e, "main.go") || !strings.Contains(e, "+2 −1") {
+		t.Fatalf("focus edit = %q", e)
+	}
+	if densityFocus.next() != densityCompact || densityCompact.next() != densityExpanded || densityExpanded.next() != densityFocus {
+		t.Fatal("ctrl+o cycle order")
 	}
 }

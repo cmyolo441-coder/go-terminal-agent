@@ -4,6 +4,7 @@ import "strings"
 
 // Layout densities for Options.Density and /density.
 const (
+	DensityFocus    = "focus"
 	DensityCompact  = "compact"
 	DensityExpanded = "expanded"
 )
@@ -18,25 +19,43 @@ type density struct {
 	diffMax   int // diff rows under an edit
 	approval  int // diff rows in the approval dialog; 0 fits the screen
 	thinking  int // lines of a reasoning summary
+	// oneLine shows each finished tool call as a single ✓/✗ line (with a
+	// one-line reason on failure), leaving the transcript to the
+	// agent's narration. Ctrl+O switches to a fuller density.
+	oneLine bool
 }
 
 var (
+	densityFocus    = density{name: DensityFocus, toolHead: 6, bashTail: 8, shellTail: 20, diffMax: 40, approval: 18, thinking: 16, oneLine: true}
 	densityCompact  = density{name: DensityCompact, toolHead: 6, bashTail: 8, shellTail: 20, diffMax: 40, approval: 18, thinking: 16}
 	densityExpanded = density{name: DensityExpanded, toolHead: 60, bashTail: 60, shellTail: 200, diffMax: 400, approval: 0, thinking: 64}
 )
 
 // DensityNames lists the accepted density values.
-func DensityNames() []string { return []string{DensityCompact, DensityExpanded} }
+func DensityNames() []string { return []string{DensityFocus, DensityCompact, DensityExpanded} }
 
-// parseDensity reads a density name; empty means compact.
+// parseDensity reads a density name; empty means focus.
 func parseDensity(s string) (density, bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", DensityCompact, "dense", "short":
+	case "", DensityFocus, "minimal", "oneline", "one-line":
+		return densityFocus, true
+	case DensityCompact, "dense", "short":
 		return densityCompact, true
 	case DensityExpanded, "expand", "full", "long", "verbose":
 		return densityExpanded, true
 	}
-	return densityCompact, false
+	return densityFocus, false
+}
+
+// next is the density Ctrl+O switches to.
+func (d density) next() density {
+	switch d.name {
+	case DensityFocus:
+		return densityCompact
+	case DensityCompact:
+		return densityExpanded
+	}
+	return densityFocus
 }
 
 // approvalRows is how many diff rows the approval dialog shows for a

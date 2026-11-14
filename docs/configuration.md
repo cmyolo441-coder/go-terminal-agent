@@ -65,6 +65,7 @@ Defaults are from `config.Default()`. "—" means the zero value (empty,
 | `base_url` | string | — | Override the provider's API URL. |
 | `subagent_model` | string | — | Model for `task` sub-agents and the `/plan` planner and reviewer. Empty means the main model. |
 | `theme` | string | `"auto"` | Markdown style: `auto`, `dark`, `light`. |
+| `density` | string | `"focus"` | How tool calls show in the transcript: `focus` (one ✓/✗ line per call, with the command or target), `compact` (output collapsed after a few lines) or `expanded`. `/density` switches at runtime. |
 
 ### Anthropic server-side features
 

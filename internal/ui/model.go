@@ -205,7 +205,7 @@ func newModel(opts Options, width int) *model {
 		density:   d,
 	}
 	if !ok {
-		m.startNotes = append(m.startNotes, fmt.Sprintf("unknown density %q; using compact (choose %s)", opts.Density, strings.Join(DensityNames(), " or ")))
+		m.startNotes = append(m.startNotes, fmt.Sprintf("unknown density %q; using focus (choose %s)", opts.Density, strings.Join(DensityNames(), " or ")))
 	}
 	m.restyle()
 	m.layoutInput()

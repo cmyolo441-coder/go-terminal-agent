@@ -65,7 +65,7 @@ func init() {
 		{name: "mode", args: "[mode]", help: "Permissions: ask, auto-edit, plan, yolo", run: cmdMode},
 		{name: "thinking", help: "Toggle showing the model's reasoning summary", run: cmdThinking},
 		{name: "theme", aliases: []string{"themes"}, args: "[name]", help: "List color themes, or switch and preview one", run: cmdTheme},
-		{name: "density", aliases: []string{"layout"}, args: "[compact|expanded]", help: "How much tool output to show", run: cmdDensity},
+		{name: "density", aliases: []string{"layout"}, args: "[focus|compact|expanded]", help: "How much tool output to show", run: cmdDensity},
 		{name: "cost", aliases: []string{"usage"}, help: "Token usage and estimated cost", run: cmdCost},
 		{name: "tasks", aliases: []string{"todos"}, help: "Show the agent's task list", run: cmdTodos},
 		{name: "compact", args: "[focus]", help: "Summarize the conversation to free context", run: cmdCompact},

@@ -45,7 +45,8 @@ type Config struct {
 	// Theme is the color theme: auto, dark, light, high-contrast, arctic,
 	// solar or mono. Keep Themes in sync with ui.ThemeNames.
 	Theme string `json:"theme"`
-	// Density is "compact" (long tool output collapsed) or "expanded".
+	// Density is "focus" (one line per tool call; the default), "compact"
+	// (long tool output collapsed) or "expanded". Ctrl+O cycles them.
 	Density string `json:"density"`
 
 	// Provider is "anthropic" (default) or an OpenAI-compatible preset such
@@ -165,7 +166,7 @@ func Default() Config {
 		MaxTurns:     200,
 		ShellTimeout: 120,
 		Theme:        "auto",
-		Density:      "compact",
+		Density:      "focus",
 		Provider:     "anthropic",
 		Sandbox:      "off",
 
@@ -414,9 +415,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: theme %q is not one of %s", c.Theme, strings.Join(Themes, ", "))
 	}
 	switch c.Density {
-	case "", "compact", "expanded":
+	case "", "focus", "compact", "expanded":
 	default:
-		return fmt.Errorf("config: density %q is not one of compact, expanded", c.Density)
+		return fmt.Errorf("config: density %q is not one of focus, compact, expanded", c.Density)
 	}
 	return nil
 }
