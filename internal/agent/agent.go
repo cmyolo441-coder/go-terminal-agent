@@ -87,6 +87,58 @@ type Agent struct {
 	started  time.Time
 	cost     float64
 	context  int64
+	// steer holds messages the user typed while a turn was running; they
+	// join the conversation at the next model call.
+	steer []string
+}
+
+// steerPrefix marks text the user sent while the agent was working, so
+// the model treats it as a correction to the task in progress.
+const steerPrefix = "<user-steering>\nThe user sent this while you were working. Take it into account right away; it may change or correct what you are doing:\n"
+
+// Steer queues text the user typed while a turn is running. It joins the
+// conversation before the next model call of the same turn, so the user
+// can redirect the agent without waiting for it to finish. It reports
+// false when no turn is running; the caller should then send the text as
+// a normal prompt.
+func (a *Agent) Steer(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.active == nil {
+		return false
+	}
+	a.steer = append(a.steer, text)
+	return true
+}
+
+// TakeSteering returns and clears steering text that arrived too late to
+// join the turn (for example after the model's final reply). The UI sends
+// it as the next prompt.
+func (a *Agent) TakeSteering() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s := a.steer
+	a.steer = nil
+	return s
+}
+
+// steeringBlocks drains pending steering into text blocks.
+func (a *Agent) steeringBlocks() []llm.Block {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.steer) == 0 {
+		return nil
+	}
+	out := make([]llm.Block, 0, len(a.steer))
+	for _, t := range a.steer {
+		out = append(out, llm.Block{Type: llm.BlockText, Text: steerPrefix + t + "\n</user-steering>"})
+	}
+	a.steer = nil
+	return out
 }
 
 // New builds an agent.
@@ -346,6 +398,12 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 		case resp.StopReason == llm.StopPauseTurn:
 			continue
 		case len(uses) == 0:
+			if st := a.steeringBlocks(); len(st) > 0 && resp.StopReason != llm.StopMaxTokens {
+				// The user steered while the final reply streamed: carry
+				// on in the same turn instead of ending it.
+				a.appendUser(st)
+				continue
+			}
 			if resp.StopReason == llm.StopMaxTokens {
 				sink.Notice("The reply hit the max_tokens limit. Say \"continue\" to resume, or raise max_tokens.")
 				return nil
@@ -377,6 +435,9 @@ func (a *Agent) Run(ctx context.Context, user llm.Message, sink Sink) error {
 		}
 
 		results, stop := a.runTools(ctx, uses, sink)
+		if !stop {
+			results = append(results, a.steeringBlocks()...)
+		}
 		a.appendUser(results)
 		if ctx.Err() != nil {
 			return ErrInterrupted
