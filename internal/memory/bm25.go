@@ -18,18 +18,38 @@ type BM25Config struct {
 // BM25 is an in-memory inverted index scored with Okapi BM25 and the
 // non-negative Lucene IDF, ln(1 + (N - df + 0.5) / (df + 0.5)). Documents
 // are bags of pre-analysed terms keyed by a uint64. It is safe for
-// concurrent use.
+// concurrent use: searches share a read lock.
+//
+// Documents live in dense slots (reused after removal) so that scoring
+// accumulates into a flat array instead of a hash map, and posting lists
+// are parallel slices that scan sequentially.
 type BM25 struct {
 	mu       sync.RWMutex
 	k1, b    float64
-	postings map[string]map[uint64]uint32 // term -> doc -> tf
-	docs     map[uint64]bm25Doc
+	postings map[string]*postingList
+	slots    []bm25Doc
+	free     []uint32
+	byKey    map[uint64]uint32
 	totalLen uint64
+
+	scratch sync.Pool // *bm25Scratch
+}
+
+type postingList struct {
+	slots []uint32
+	tfs   []uint32
 }
 
 type bm25Doc struct {
+	key    uint64
+	live   bool
 	length uint32
 	terms  []string // distinct terms, for removal
+}
+
+type bm25Scratch struct {
+	acc     []float64
+	touched []uint32
 }
 
 // LexicalHit is a BM25 search result.
@@ -49,14 +69,16 @@ func NewBM25(cfg BM25Config) *BM25 {
 	case cfg.B == 0 || cfg.B > 1:
 		cfg.B = 0.75
 	}
-	return &BM25{k1: cfg.K1, b: cfg.B, postings: map[string]map[uint64]uint32{}, docs: map[uint64]bm25Doc{}}
+	ix := &BM25{k1: cfg.K1, b: cfg.B, postings: map[string]*postingList{}, byKey: map[uint64]uint32{}}
+	ix.scratch.New = func() any { return &bm25Scratch{} }
+	return ix
 }
 
 // Len is the number of indexed documents.
 func (ix *BM25) Len() int {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	return len(ix.docs)
+	return len(ix.byKey)
 }
 
 // Terms is the number of distinct terms.
@@ -72,20 +94,32 @@ func (ix *BM25) Add(key uint64, terms []string) {
 	defer ix.mu.Unlock()
 	ix.removeLocked(key)
 	tf := make(map[string]uint32, len(terms))
+	distinct := make([]string, 0, len(terms))
 	for _, t := range terms {
+		if tf[t] == 0 {
+			distinct = append(distinct, t)
+		}
 		tf[t]++
 	}
-	distinct := make([]string, 0, len(tf))
-	for t, n := range tf {
+	var slot uint32
+	if n := len(ix.free); n > 0 {
+		slot = ix.free[n-1]
+		ix.free = ix.free[:n-1]
+	} else {
+		slot = uint32(len(ix.slots))
+		ix.slots = append(ix.slots, bm25Doc{})
+	}
+	for _, t := range distinct {
 		p := ix.postings[t]
 		if p == nil {
-			p = map[uint64]uint32{}
+			p = &postingList{}
 			ix.postings[t] = p
 		}
-		p[key] = n
-		distinct = append(distinct, t)
+		p.slots = append(p.slots, slot)
+		p.tfs = append(p.tfs, tf[t])
 	}
-	ix.docs[key] = bm25Doc{length: uint32(len(terms)), terms: distinct}
+	ix.slots[slot] = bm25Doc{key: key, live: true, length: uint32(len(terms)), terms: distinct}
+	ix.byKey[key] = slot
 	ix.totalLen += uint64(len(terms))
 }
 
@@ -97,19 +131,26 @@ func (ix *BM25) Remove(key uint64) bool {
 }
 
 func (ix *BM25) removeLocked(key uint64) bool {
-	d, ok := ix.docs[key]
+	slot, ok := ix.byKey[key]
 	if !ok {
 		return false
 	}
+	d := &ix.slots[slot]
 	for _, t := range d.terms {
 		p := ix.postings[t]
-		delete(p, key)
-		if len(p) == 0 {
+		if i := slices.Index(p.slots, slot); i >= 0 {
+			last := len(p.slots) - 1
+			p.slots[i], p.tfs[i] = p.slots[last], p.tfs[last]
+			p.slots, p.tfs = p.slots[:last], p.tfs[:last]
+		}
+		if len(p.slots) == 0 {
 			delete(ix.postings, t)
 		}
 	}
 	ix.totalLen -= uint64(d.length)
-	delete(ix.docs, key)
+	*d = bm25Doc{}
+	ix.free = append(ix.free, slot)
+	delete(ix.byKey, key)
 	return true
 }
 
@@ -117,69 +158,134 @@ func (ix *BM25) removeLocked(key uint64) bool {
 func (ix *BM25) IDF(term string) float64 {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	return ix.idfLocked(len(ix.postings[term]))
+	df := 0
+	if p := ix.postings[term]; p != nil {
+		df = len(p.slots)
+	}
+	return ix.idfLocked(df)
 }
 
 func (ix *BM25) idfLocked(df int) float64 {
-	n := float64(len(ix.docs))
+	n := float64(len(ix.byKey))
 	return math.Log(1 + (n-float64(df)+0.5)/(float64(df)+0.5))
 }
 
 // Search scores every document containing at least one query term and
-// returns the best n (all when n <= 0) by descending score. Repeated query
-// terms count once. accept, when non-nil, filters documents.
+// returns the best n (all when n <= 0) by descending score, ties by key.
+// Repeated query terms count once. accept, when non-nil, filters
+// documents; it is called once per matching document.
 func (ix *BM25) Search(query []string, n int, accept func(key uint64) bool) []LexicalHit {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	if len(ix.docs) == 0 || len(query) == 0 {
+	if len(ix.byKey) == 0 || len(query) == 0 {
 		return nil
 	}
-	avg := float64(ix.totalLen) / float64(len(ix.docs))
+	avg := float64(ix.totalLen) / float64(len(ix.byKey))
 	if avg == 0 {
 		avg = 1
 	}
-	scores := map[uint64]float64{}
-	seen := make(map[string]bool, len(query))
-	for _, t := range query {
-		if seen[t] {
+	sc := ix.scratch.Get().(*bm25Scratch)
+	defer ix.scratch.Put(sc)
+	if len(sc.acc) < len(ix.slots) {
+		sc.acc = make([]float64, len(ix.slots)+len(ix.slots)/4)
+	}
+	acc, touched := sc.acc, sc.touched[:0]
+	k1, b := ix.k1, ix.b
+	norm := k1 * (1 - b)
+	lenScale := k1 * b / avg
+	for qi, t := range query {
+		if slices.Contains(query[:qi], t) {
 			continue
 		}
-		seen[t] = true
 		p := ix.postings[t]
-		if len(p) == 0 {
+		if p == nil {
 			continue
 		}
-		idf := ix.idfLocked(len(p))
-		for key, tf := range p {
-			if accept != nil && !accept(key) {
-				continue
+		idf := ix.idfLocked(len(p.slots)) * (k1 + 1)
+		for i, slot := range p.slots {
+			f := float64(p.tfs[i])
+			if acc[slot] == 0 {
+				touched = append(touched, slot)
 			}
-			f := float64(tf)
-			dl := float64(ix.docs[key].length)
-			scores[key] += idf * f * (ix.k1 + 1) / (f + ix.k1*(1-ix.b+ix.b*dl/avg))
+			acc[slot] += idf * f / (f + norm + lenScale*float64(ix.slots[slot].length))
 		}
 	}
-	hits := make([]LexicalHit, 0, len(scores))
-	for k, s := range scores {
-		hits = append(hits, LexicalHit{Key: k, Score: s})
+	limit := len(touched)
+	if n > 0 {
+		limit = min(n, limit)
 	}
-	slices.SortFunc(hits, func(a, b LexicalHit) int {
-		switch {
-		case a.Score > b.Score:
+	h := lexHeap{s: make([]LexicalHit, 0, limit)}
+	for _, slot := range touched {
+		score := acc[slot]
+		acc[slot] = 0
+		key := ix.slots[slot].key
+		if score <= 0 || (accept != nil && !accept(key)) {
+			continue
+		}
+		hit := LexicalHit{Key: key, Score: score}
+		if n <= 0 || h.len() < n {
+			h.push(hit)
+		} else if lexBetter(hit, h.s[0]) {
+			h.s[0] = hit
+			h.down(0)
+		}
+	}
+	sc.touched = touched[:0]
+	out := h.s
+	slices.SortFunc(out, func(a, b LexicalHit) int {
+		if lexBetter(a, b) {
 			return -1
-		case a.Score < b.Score:
-			return 1
-		case a.Key < b.Key:
-			return -1
-		case a.Key > b.Key:
+		}
+		if lexBetter(b, a) {
 			return 1
 		}
 		return 0
 	})
-	if n > 0 && len(hits) > n {
-		hits = hits[:n]
+	return out
+}
+
+// lexBetter orders hits by descending score, then ascending key.
+func lexBetter(a, b LexicalHit) bool {
+	if a.Score != b.Score {
+		return a.Score > b.Score
 	}
-	return hits
+	return a.Key < b.Key
+}
+
+// lexHeap is a bounded heap with the worst hit on top.
+type lexHeap struct{ s []LexicalHit }
+
+func (h *lexHeap) len() int { return len(h.s) }
+
+func (h *lexHeap) push(x LexicalHit) {
+	h.s = append(h.s, x)
+	i := len(h.s) - 1
+	for i > 0 {
+		p := (i - 1) / 2
+		if !lexBetter(h.s[p], h.s[i]) {
+			break
+		}
+		h.s[p], h.s[i] = h.s[i], h.s[p]
+		i = p
+	}
+}
+
+func (h *lexHeap) down(i int) {
+	n := len(h.s)
+	for {
+		l, r, w := 2*i+1, 2*i+2, i
+		if l < n && lexBetter(h.s[w], h.s[l]) {
+			w = l
+		}
+		if r < n && lexBetter(h.s[w], h.s[r]) {
+			w = r
+		}
+		if w == i {
+			return
+		}
+		h.s[w], h.s[i] = h.s[i], h.s[w]
+		i = w
+	}
 }
 
 // Matched returns the query terms present in document key, in query order
@@ -187,9 +293,16 @@ func (ix *BM25) Search(query []string, n int, accept func(key uint64) bool) []Le
 func (ix *BM25) Matched(key uint64, query []string) []string {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
+	slot, ok := ix.byKey[key]
+	if !ok {
+		return nil
+	}
 	var out []string
 	for _, t := range query {
-		if _, ok := ix.postings[t][key]; ok && !slices.Contains(out, t) {
+		if slices.Contains(out, t) {
+			continue
+		}
+		if slices.Contains(ix.slots[slot].terms, t) {
 			out = append(out, t)
 		}
 	}
