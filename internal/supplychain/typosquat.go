@@ -44,9 +44,9 @@ func DamerauLevenshtein(a, b string) int {
 				db = j
 			}
 			d[i+1][j+1] = min(
-				d[i][j]+cost,  // substitution
-				d[i+1][j]+1,   // insertion
-				d[i][j+1]+1,   // deletion
+				d[i][j]+cost, // substitution
+				d[i+1][j]+1,  // insertion
+				d[i][j+1]+1,  // deletion
 				d[i1][j1]+(i-i1-1)+1+(j-j1-1), // transposition
 			)
 		}

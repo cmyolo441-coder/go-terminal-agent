@@ -903,7 +903,7 @@ type Stats struct {
 	PendingTouches int
 
 	Remembered, Merged, Recalls, Forgotten, Expirations, Evictions int64
-	Consolidated, Rebuilds, Compactions, Reloads                    int64
+	Consolidated, Rebuilds, Compactions, Reloads                   int64
 }
 
 // Stats returns statistics.

@@ -208,25 +208,22 @@ func truncateToTokens(s string, budget int, count func(string) int) string {
 	if budget <= 0 {
 		return ""
 	}
-	lo, hi := 0, len(s)
+	// Binary search over rune boundaries for the longest fitting prefix.
+	bounds := make([]int, 0, len(s)+1)
+	for i := range s {
+		bounds = append(bounds, i)
+	}
+	bounds = append(bounds, len(s))
+	lo, hi := 0, len(bounds)-1 // bounds[lo] fits; bounds[hi+1] does not
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		for mid > 0 && mid < len(s) && !utf8.RuneStart(s[mid]) {
-			mid--
-		}
-		if mid <= lo {
-			break
-		}
-		if count(s[:mid]) <= budget {
+		if count(s[:bounds[mid]]) <= budget {
 			lo = mid
 		} else {
 			hi = mid - 1
-			for hi > lo && hi < len(s) && !utf8.RuneStart(s[hi]) {
-				hi--
-			}
 		}
 	}
-	out := s[:lo]
+	out := s[:bounds[lo]]
 	if i := strings.LastIndexByte(out, ' '); i > len(out)*2/3 {
 		out = out[:i]
 	}
