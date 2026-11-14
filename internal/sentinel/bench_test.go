@@ -93,10 +93,14 @@ func BenchmarkObserveExecLexing(b *testing.B) {
 	s := benchSentinel(b)
 	st := newSteadyStream(1024)
 	warm(s, st)
+	// Realistic compound command lines, distinct enough that no detector
+	// fires, so this measures lexing and matching alone.
+	words := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa"}
 	evs := make([]Event, 64)
 	for i := range evs {
+		x, y, z := words[i%16], words[(i/16+3*i)%16], words[(i*7+5)%16]
 		evs[i] = Event{Session: "bench", Kind: KindExec, Tool: "bash",
-			Target: fmt.Sprintf(`cd /work/repo && FOO=1 go build -o bin/app%d ./cmd/app 2>&1 | tee build.log; echo "done %d"`, i, i)}
+			Target: fmt.Sprintf(`cd /work/%s && FOO=%s go build -o bin/%s ./cmd/%s 2>&1 | tee %s.log; echo "%s %d"`, x, y, z, x, y, z, i)}
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -105,6 +109,10 @@ func BenchmarkObserveExecLexing(b *testing.B) {
 		st.now = st.now.Add(time.Second)
 		ev.Time = st.now
 		s.Observe(ev)
+	}
+	b.StopTimer()
+	if n := len(s.Incidents()); n != 0 {
+		b.Fatalf("exec stream raised %d incidents, first %+v", n, s.Incidents()[0].Summary)
 	}
 }
 
