@@ -138,6 +138,8 @@ type model struct {
 	queued     []string
 	pending    []string // context from ! shell commands, sent with the next prompt
 	ctrlCAt    time.Time
+	escAt      time.Time // first esc of the esc-twice interrupt
+	title      string    // short session title for the chip and window title
 	hint       string
 	hintUntil  time.Time
 	quitting   bool
@@ -178,7 +180,7 @@ func Run(opts Options) error {
 // newModel builds the model in the active theme (see applyTheme).
 func newModel(opts Options, width int) *model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask anything · / for commands · @ to attach a file · ! to run a shell command"
+	ta.Placeholder = placeholderIdle
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.MaxHeight = 0
@@ -221,6 +223,13 @@ func (m *model) restyle() {
 	m.input.FocusedStyle.Text = sText
 	m.input.FocusedStyle.Placeholder = sFaint
 	m.input.FocusedStyle.EndOfBuffer = lipgloss.NewStyle()
+	// The textarea keeps a pointer to its active style, taken when it was
+	// focused, and that pointer still names the copy built in newModel.
+	// Re-focus so it points at m.input's own styles set above; otherwise
+	// the default black cursor-line background shows behind the prompt.
+	if m.input.Focused() {
+		m.input.Focus()
+	}
 	m.md.setTheme(currentTheme, termDark)
 }
 
@@ -407,9 +416,35 @@ func (m *model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.phase == phaseRunning {
-			m.interrupt()
+			if time.Since(m.escAt) < escTwiceWindow {
+				m.escAt = time.Time{}
+				m.interrupt()
+				return m, nil
+			}
+			m.escAt = time.Now()
+			m.flash("Press esc again to interrupt · or just type to steer the agent")
 			return m, nil
 		}
+		return m, nil
+	case "ctrl+o":
+		m.density = m.density.next()
+		m.flash("Details: " + m.density.name + " (ctrl+o cycles focus → compact → expanded)")
+		return m, nil
+	case "alt+t":
+		var on bool
+		m.ag.Update(func(s *agentSettings) { s.ShowThinking = !s.ShowThinking; on = s.ShowThinking })
+		m.flash(map[bool]string{true: "Thinking summaries shown", false: "Thinking summaries hidden"}[on])
+		return m, nil
+	case "ctrl+g":
+		// Queue the draft for after the turn instead of steering now.
+		text := strings.TrimSpace(m.input.Value())
+		if text == "" || m.phase == phaseIdle {
+			return m, nil
+		}
+		m.input.Reset()
+		m.layoutInput()
+		m.queued = append(m.queued, text)
+		m.flash(fmt.Sprintf("Queued for after this turn (%d waiting)", len(m.queued)))
 		return m, nil
 	case "shift+tab":
 		mode := m.ag.Gate.Cycle()
@@ -651,6 +686,11 @@ func (m *model) submit(text string) tea.Cmd {
 		return m.runShell(cmd)
 	}
 	if m.phase != phaseIdle {
+		if m.phase == phaseRunning && !m.compacting && m.ag.Steer(text) {
+			m.emit(renderSteer(text, m.width))
+			m.flash("Sent: the agent sees this before its next step")
+			return nil
+		}
 		m.queued = append(m.queued, text)
 		m.flash(fmt.Sprintf("Queued: will send after the current turn (%d waiting)", len(m.queued)))
 		return nil
@@ -664,6 +704,21 @@ func (m *model) startRun(text, shown string) tea.Cmd {
 	if shown != "" {
 		m.emit(renderUser(shown, m.width))
 	}
+	var titleCmd tea.Cmd
+	if m.title == "" {
+		if t := sessionTitle(text); t != "" {
+			m.title = t
+			titleCmd = tea.SetWindowTitle("gta: " + t)
+		}
+	}
+	if titleCmd != nil {
+		return tea.Batch(titleCmd, m.startRunNow(text))
+	}
+	return m.startRunNow(text)
+}
+
+// startRunNow sends text to the agent (startRun has echoed it).
+func (m *model) startRunNow(text string) tea.Cmd {
 	msg, attached, problems := buildPrompt(m.ag.Env, text)
 	for _, a := range attached {
 		m.emit(sFaint.Render("  "+gResult+"  ") + sMuted.Render("Attached "+a))
@@ -687,6 +742,8 @@ func (m *model) launch(fn func(ctx context.Context, sink agent.Sink) error) tea.
 	m.cancel = cancel
 	m.phase = phaseRunning
 	m.runStart = time.Now()
+	m.escAt = time.Time{}
+	m.input.Placeholder = placeholderRunning
 	m.verb = "Thinking"
 	m.streamed = 0
 	m.turnUsage = llm.Usage{}
@@ -709,6 +766,12 @@ func (m *model) finishRun(err error) tea.Cmd {
 		m.cancel = nil
 	}
 	m.phase = phaseIdle
+	m.input.Placeholder = placeholderIdle
+	// Steering that arrived after the agent's last model call goes out
+	// first, as the next prompt.
+	if late := m.ag.TakeSteering(); len(late) > 0 {
+		m.queued = append(late, m.queued...)
+	}
 	switch {
 	case errors.Is(err, agent.ErrInterrupted):
 		m.emit(renderNotice("Interrupted. Tell GTA what to do instead."))
@@ -888,6 +951,9 @@ func (m *model) columnView() string {
 	if m.phase == phaseApproving && m.approval != nil {
 		sections = append(sections, m.approvalView())
 	} else {
+		if m.phase == phaseIdle {
+			sections = append(sections, m.cwdLine())
+		}
 		sections = append(sections, m.promptBox())
 		sections = append(sections, m.statusLine())
 		if len(m.suggest) > 0 {
@@ -937,27 +1003,35 @@ func (m *model) liveView() string {
 		if verb == "" {
 			verb = "Working"
 		}
-		meta := []string{fmtDuration(time.Since(m.runStart))}
+		line := spin + " " + sAccentB.Render(verb) + sFaint.Render(" · "+fmtDuration(time.Since(m.runStart))+" (esc twice to interrupt)")
 		if m.streamed > 0 {
-			meta = append(meta, "↓ "+fmtTokens(int64(m.streamed/4))+" tokens")
+			line += sFaint.Render(" · ↓ " + fmtTokens(int64(m.streamed/4)) + " tokens")
 		}
-		meta = append(meta, "esc to interrupt")
-		parts = append(parts, spin+" "+sAccentB.Render(verb+"…")+" "+sFaint.Render("("+strings.Join(meta, " · ")+")"))
+		parts = append(parts, line)
 	}
 	return strings.Join(parts, "\n")
 }
 
 func (m *model) promptBox() string {
-	border := cAccent
+	ruleStyle := sAccent
 	if m.phase != phaseIdle {
-		border = cFaint
+		ruleStyle = sFaint
 	}
-	box := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(border).
-		Padding(0, 1).
-		Width(m.width - 2)
-	return box.Render(m.input.View())
+	w := max(10, m.width-1)
+	top := ruleStyle.Render(strings.Repeat("─", w))
+	if m.title != "" {
+		chip := sChip.Render(" " + clip(m.title, max(8, w/3)) + " ")
+		if lead := w - lipgloss.Width(chip) - 2; lead > 4 {
+			top = ruleStyle.Render(strings.Repeat("─", lead)) + chip + ruleStyle.Render("──")
+		}
+	}
+	bottom := ruleStyle.Render(strings.Repeat("─", w))
+	return top + "\n" + m.input.View() + "\n" + bottom
+}
+
+// cwdLine shows the workspace above the prompt while idle.
+func (m *model) cwdLine() string {
+	return " " + sAccent.Render(gBullet) + " " + sMuted.Render(clipMiddle(prettyPath(m.opts.Root), max(10, m.width-6)))
 }
 
 func (m *model) statusLine() string {
@@ -984,7 +1058,14 @@ func (m *model) statusLine() string {
 	if len(right) == 0 {
 		right = append(right, "? /help")
 	}
+	hints := "ctrl+o details"
+	if m.phase == phaseRunning {
+		hints += " · alt+t thinking"
+	}
 	r := sFaint.Render(strings.Join(right, " · "))
+	if withHints := sFaint.Render(strings.Join(append(right, hints), " · ")); m.width-2-lipgloss.Width(left)-lipgloss.Width(withHints) >= 1 {
+		r = withHints
+	}
 	gap := m.width - 2 - lipgloss.Width(left) - lipgloss.Width(r)
 	if gap < 1 {
 		return " " + left
@@ -1120,7 +1201,8 @@ func (m *model) banner() string {
 	if m.opts.AuthHint != "" {
 		lines = append(lines, "", sAmber.Render("! ")+sText.Render(m.opts.AuthHint))
 	}
-	lines = append(lines, "", sFaint.Render("/help · /status · shift+tab mode · alt+enter newline · esc interrupt · ctrl+c ×2 exit"))
+	lines = append(lines, "", sAccent2.Render(gTip+" Did you know"), sMuted.Render(tipOfTheDay(time.Now())))
+	lines = append(lines, "", sFaint.Render("/help · /status · shift+tab mode · alt+enter newline · esc ×2 interrupt · ctrl+c ×2 exit"))
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(cAccent).

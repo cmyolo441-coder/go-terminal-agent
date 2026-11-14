@@ -204,7 +204,9 @@ func cmdHelp(m *model, _ string) tea.Cmd {
 		{"↑ / ↓", "history · tab completes commands"},
 		{"shift+tab", "cycle permission mode"},
 		{"ctrl+b", "show or hide the live browser panel (gta --browser)"},
-		{"esc", "interrupt the agent · ctrl+c twice to exit"},
+		{"esc esc", "interrupt the agent · ctrl+c twice to exit"},
+		{"enter (running)", "steer the agent now · ctrl+g queues for after the turn"},
+		{"ctrl+o / alt+t", "tool-call detail · thinking summaries"},
 	} {
 		b.WriteString("  " + sKey.Render(padRight(kv[0], col)) + sMuted.Render(kv[1]) + "\n")
 	}

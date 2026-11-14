@@ -241,7 +241,16 @@ func (t Theme) mdStyle(termDark bool) ansi.StyleConfig {
 	cfg.H6.Color = str(p.Muted.hex(dark))
 	cfg.Link.Color = str(p.Accent2.hex(dark))
 	cfg.LinkText.Color = str(p.Accent2.hex(dark))
-	cfg.Code.Color = str(p.Amber.hex(dark))
+	// Inline code reads as a chip: accent text on a faint background,
+	// padded by a space on each side.
+	cfg.Code.Color = str(p.Accent2.hex(dark))
+	codeBg := "#E6EDF3"
+	if dark {
+		codeBg = "#243240"
+	}
+	cfg.Code.BackgroundColor = str(codeBg)
+	cfg.Code.Prefix = " "
+	cfg.Code.Suffix = " "
 	cfg.Item.Color = str(p.Accent.hex(dark))
 	cfg.Enumeration.Color = str(p.Accent.hex(dark))
 	cfg.BlockQuote.Color = str(p.Muted.hex(dark))
@@ -273,6 +282,8 @@ var (
 	sMuted, sFaint, sItalic                   lipgloss.Style
 	sGreen, sRed, sAmber, sBlue               lipgloss.Style
 	sUserBar, sKey                            lipgloss.Style
+	// sChip is a small label on a coloured background (the session title).
+	sChip lipgloss.Style
 
 	sDiffAdd, sDiffDel, sDiffAddHi, sDiffDelHi lipgloss.Style
 	sDiffAddNum, sDiffDelNum, sDiffHunk        lipgloss.Style
@@ -293,6 +304,7 @@ func applyTheme(t Theme) {
 		sMuted, sFaint, sItalic = ns(), ns().Faint(true), ns().Italic(true)
 		sGreen, sRed, sAmber, sBlue = ns(), ns(), ns(), ns()
 		sUserBar, sKey = ns().Bold(true), ns().Bold(true)
+		sChip = ns().Reverse(true)
 		sDiffAdd, sDiffDel = ns(), ns().Faint(true)
 		sDiffAddHi, sDiffDelHi = ns().Reverse(true), ns().Reverse(true)
 		sDiffAddNum, sDiffDelNum = ns().Faint(true), ns().Faint(true)
@@ -319,6 +331,7 @@ func applyTheme(t Theme) {
 	sBlue = ns().Foreground(cBlue)
 	sUserBar = ns().Foreground(cAccent).Bold(true)
 	sKey = ns().Foreground(cAccent2).Bold(true)
+	sChip = ns().Foreground(cText).Background(cFaint)
 	sDiffAdd = ns().Foreground(cGreen).Background(addBg)
 	sDiffDel = ns().Foreground(cRed).Background(delBg)
 	sDiffAddHi = ns().Foreground(cText).Background(p.AddHiBg.color()).Bold(true)

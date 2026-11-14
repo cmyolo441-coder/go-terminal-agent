@@ -110,7 +110,11 @@ The token comes from `GTA_SERVE_TOKEN`, or is generated. See
 | `tab` | Complete a `/command` or `@file`. |
 | `↑` / `↓` | Prompt history (or move through completions). |
 | `shift+tab` | Cycle permission mode `ask → auto-edit → plan → yolo`, skipping modes a managed policy forbids. |
-| `esc` | Close completions, or interrupt the running turn. |
+| `esc` | Close completions. While the agent works, press it twice within 1.5 s to interrupt the turn. |
+| `enter` while the agent works | Steer: the message joins the conversation before the agent's next step, so you can correct it mid-task without waiting. It shows as `↳ steer …`. |
+| `ctrl+g` while the agent works | Queue the message for after the current turn instead of steering. |
+| `ctrl+o` | Cycle tool-call detail: `focus` (one ✓/✗ line per call) → `compact` → `expanded`. |
+| `alt+t` | Show or hide the model's thinking summaries. |
 | `ctrl+c` | Interrupt the running turn; clear the input; twice within 2 s on an empty prompt: exit. |
 | `ctrl+d` | Exit when the prompt is empty. |
 | `ctrl+b` | Show or hide the live browser panel beside the prompt (needs `--browser`). |
