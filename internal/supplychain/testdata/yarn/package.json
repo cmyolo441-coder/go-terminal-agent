@@ -1,0 +1,1 @@
+{"name": "y", "dependencies": {"@babel/code-frame": "^7.10.4", "my-lodash": "npm:lodash@^4.17.0"}}

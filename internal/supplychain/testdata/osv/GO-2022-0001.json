@@ -1,0 +1,38 @@
+{
+  "id": "GO-2022-0001",
+  "summary": "yaml crash",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Go",
+        "name": "gopkg.in/yaml.v3"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "3.0.0"
+            }
+          ]
+        }
+      ],
+      "ecosystem_specific": {
+        "imports": [
+          {
+            "path": "gopkg.in/yaml.v3",
+            "symbols": [
+              "Unmarshal"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "database_specific": {
+    "severity": "MODERATE"
+  }
+}

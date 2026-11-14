@@ -1,0 +1,58 @@
+{
+    "_readme": [
+        "x"
+    ],
+    "content-hash": "abc",
+    "packages": [
+        {
+            "name": "symfony/http-foundation",
+            "version": "v5.4.20",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/symfony/http-foundation.git",
+                "reference": "abc"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/symfony/http-foundation/zipball/abc",
+                "reference": "abc",
+                "shasum": "d3ccb842d38eff2c38fd0e2bf167305b0af6e86e"
+            },
+            "require": {
+                "php": ">=7.2.5",
+                "symfony/polyfill-mbstring": "~1.1",
+                "ext-json": "*"
+            },
+            "license": [
+                "MIT"
+            ],
+            "type": "library"
+        },
+        {
+            "name": "symfony/polyfill-mbstring",
+            "version": "v1.27.0",
+            "dist": {
+                "type": "zip",
+                "url": "https://x/zip",
+                "reference": "r",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=7.1"
+            },
+            "license": [
+                "MIT"
+            ]
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "phpunit/phpunit",
+            "version": "9.6.13",
+            "license": [
+                "BSD-3-Clause"
+            ],
+            "require": {}
+        }
+    ]
+}

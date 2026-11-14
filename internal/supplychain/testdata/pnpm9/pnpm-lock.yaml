@@ -1,0 +1,72 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.2.0(react@18.2.0)
+      react:
+        specifier: ^18.2.0
+        version: 18.2.0
+    devDependencies:
+      typescript:
+        specifier: ~5.3.0
+        version: 5.3.3
+      local-lib:
+        specifier: link:../lib
+        version: link:../lib
+
+packages:
+
+  js-tokens@4.0.0:
+    resolution: {integrity: sha512-NtMRWkEYBzfoZYj9Brt+SN9Fc3Qqvav5mhXYR1XxAF5McJny8faDyH2mOWm71pg2OZhM2z/z9pLGBw+ykZnYzg==}
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-BS1S+T+vT6QDf8Hhzt7BeSU+R+PyoR9+8HD8/Dk6dCnew0HEZGOwANCkb20ObeEyXh5D9/Af5GBZVN+QNeCwgA==}
+    hasBin: true
+
+  react-dom@18.2.0:
+    resolution: {integrity: sha512-TYerAyA2OarFNEtHcaaNF1xrdJACgLPN6Yn8MdDOdDSx15hgi1Lep0LU/0iStkN8m1PFyuyBltmKtudvhGCJ4w==}
+    peerDependencies:
+      react: ^18.2.0
+
+  react@18.2.0:
+    resolution: {integrity: sha512-qILwrISLC2tMp7Qr+h0mav0N3rqSBK5XqYSmk3bVmBax7z9NRC6opwOWBn/1tw4K6Oqzk1the442bY41w7/hTA==}
+    engines: {node: '>=0.10.0'}
+
+  '@types/node@20.1.0':
+    resolution: {integrity: sha512-vMBdKY5oNVm19djPwm3ROKeojKtokZYRpkko8LbUMDryUlBPxzzT8ASoACWp1Gg+S1/4hEvzQEGUpVNlds2sTg==}
+
+  typescript@5.3.3:
+    resolution: {integrity: sha512-D2SrX2+VHid3WW5a0OWuAMHtNcWvmwC9E+3F2PY272zK4+nsKcOHXOwFkw1vZ6VhhLpqNgCc7+LkwSAUvTh8ow==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+snapshots:
+
+  js-tokens@4.0.0: {}
+
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
+
+  react-dom@18.2.0(react@18.2.0):
+    dependencies:
+      loose-envify: 1.4.0
+      react: 18.2.0
+
+  react@18.2.0:
+    dependencies:
+      loose-envify: 1.4.0
+
+  '@types/node@20.1.0': {}
+
+  typescript@5.3.3:
+    dependencies:
+      '@types/node': 20.1.0

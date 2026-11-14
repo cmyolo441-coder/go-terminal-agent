@@ -1,0 +1,32 @@
+lockfileVersion: '6.0'
+
+dependencies:
+  axios:
+    specifier: ^1.6.0
+    version: 1.6.2
+
+devDependencies:
+  vitest:
+    specifier: ^1.0.0
+    version: 1.0.4
+
+packages:
+
+  /axios@1.6.2:
+    resolution: {integrity: sha512-Fs0xaZZt/arlvwa6ty8vwRBrTmTGL1KhzxZMtvUROrx3H6LYbI0aZCPlG4qxNUnWWStfQtyWomnvrADP0pY75w==}
+    dependencies:
+      follow-redirects: 1.15.3
+    dev: false
+
+  /follow-redirects@1.15.3:
+    resolution: {integrity: sha512-EoquRaC7WkPO3cnRAfHCFp+GqPwfjWVX7OkF5LOMisQ894gIGjXLLvIdNWcTL9zpwa/OXZ5YtPViTcvgS04jDg==}
+    engines: {node: '>=4.0'}
+    peerDependenciesMeta:
+      debug:
+        optional: true
+    dev: false
+
+  /vitest@1.0.4:
+    resolution: {integrity: sha512-k/We/2GBN8x3gbQgfh8Jmo7WiUoRfHvgK6ZwEc0XGQYS8e5A49xy9o8pBwR1xdffM9K6CMC2fBhSGsbygtnL6A==}
+    requiresBuild: true
+    dev: true

@@ -1,0 +1,29 @@
+GIT
+  remote: https://github.com/rails/rails.git
+  revision: abcdef0123456789
+  specs:
+    activesupport (7.1.0.alpha)
+      concurrent-ruby (~> 1.0, >= 1.0.2)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    concurrent-ruby (1.2.2)
+    nokogiri (1.15.4-x86_64-linux)
+      racc (~> 1.4)
+    racc (1.7.1)
+    rack (2.2.8)
+
+PLATFORMS
+  x86_64-linux
+
+DEPENDENCIES
+  activesupport!
+  nokogiri (>= 1.15)
+  rack (~> 2.2)
+
+CHECKSUMS
+  rack (2.2.8) sha256=8e9d1a8d5b1863f1e99ed1bd8a1b7bd1ea8e19f704f5859adbcf5cdce5ca7cd9
+
+BUNDLED WITH
+   2.4.19

@@ -582,6 +582,7 @@ func (s *Sentinel) Posture(session string) Posture {
 	now := s.clock.Now().UnixNano()
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+	now = max(now, ss.last)
 	p := Posture{Action: ss.posture, Severity: ss.postureSev, Reason: ss.postureWhy, Detector: ss.postureDet, Incident: ss.postureInc}
 	if ss.posture == ActionNone {
 		return Posture{}

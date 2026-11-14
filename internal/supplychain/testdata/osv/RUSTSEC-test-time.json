@@ -1,0 +1,28 @@
+{
+  "id": "RUSTSEC-test-time",
+  "summary": "time segfault",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "crates.io",
+        "name": "time"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "0.0.0-0"
+            },
+            {
+              "fixed": "0.2.23"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

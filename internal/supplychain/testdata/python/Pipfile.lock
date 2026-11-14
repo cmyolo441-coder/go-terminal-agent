@@ -1,0 +1,34 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        },
+        "pipfile-spec": 6,
+        "requires": {
+            "python_version": "3.11"
+        },
+        "sources": []
+    },
+    "default": {
+        "idna": {
+            "hashes": [
+                "sha256:4cd9b7672d7fbee8fb51fb1e049f690342035f543a8efe734b7b5ffb0c154a45"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.5'",
+            "version": "==3.4"
+        },
+        "flask": {
+            "hashes": [
+                "sha256:3f524cdc07a11d7c6220bdb049fe8dd41b27483c96cc59b581e022d547290d69"
+            ],
+            "version": "==2.3.2"
+        }
+    },
+    "develop": {
+        "black": {
+            "hashes": [],
+            "version": "==23.1.0"
+        }
+    }
+}

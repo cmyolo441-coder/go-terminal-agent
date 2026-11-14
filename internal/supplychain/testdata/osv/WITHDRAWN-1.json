@@ -1,0 +1,15 @@
+{
+  "id": "WITHDRAWN-1",
+  "withdrawn": "2023-01-01T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "ms"
+      },
+      "versions": [
+        "2.0.0"
+      ]
+    }
+  ]
+}
