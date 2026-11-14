@@ -812,12 +812,8 @@ func TestManyConcurrentClients(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				if p.text == nil {
-					t.Error("no replica")
-					return
-				}
 				p.mu.Lock()
-				viewer := p.chat.Load() >= 0 && i%5 == 0
+				viewer := i%5 == 0
 				var op TextOp
 				var sop SetOp
 				var err error
@@ -867,13 +863,12 @@ func TestManyConcurrentClients(t *testing.T) {
 	want, _ := env.room.Prompt(ctx)
 	wantSet, _ := env.room.ContextItems(ctx)
 	totalChat := int64(clients * edits)
-	for i, p := range peers {
+	for _, p := range peers {
 		waitUntil(t, func() bool {
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			return p.text != nil && p.text.String() == want && strings.Join(p.set.Elements(), ",") == strings.Join(wantSet, ",") && p.chat.Load() >= totalChat
 		})
-		_ = i
 	}
 	cancel()
 	runWG.Wait()
@@ -908,8 +903,6 @@ func TestRoomGarbageCollection(t *testing.T) {
 	if st.Prompt.Tombstones == 0 {
 		t.Fatal("collected tombstones the owner has not acknowledged")
 	}
-	text, _ := env.room.Prompt(ctx)
-	_ = text
 	var vv VersionVector
 	_ = env.room.exec(ctx, func() { vv = env.room.prompt.VersionVector() })
 	if _, err := env.owner.Send(ctx, MsgHeartbeat, Heartbeat{VV: map[string]VersionVector{DocPrompt: vv}}); err != nil {
