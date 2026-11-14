@@ -3,6 +3,7 @@ package browser
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -126,7 +128,12 @@ func (p *Page) StartScreencast(ctx context.Context, opts ScreencastOptions) (<-c
 	p.mu.Unlock()
 
 	q := &frameQueue{signal: make(chan struct{}, 1)}
-	unsub := p.conn.subscribe(p.sessionID, "Page.screencastFrame", func(_ string, params json.RawMessage) { q.push(params) })
+	unsub := p.conn.subscribe(p.sessionID, "Page.screencastFrame", func(_ string, params json.RawMessage) {
+		if dropScreencastEvents.Load() {
+			return // tests: behave like a browser that never sends frames
+		}
+		q.push(params)
+	})
 	if err := p.call(ctx, "Page.startScreencast", params, nil); err != nil {
 		unsub()
 		p.mu.Lock()
@@ -164,9 +171,45 @@ func (p *Page) runScreencast(ctx context.Context, sc *screencast, q *frameQueue,
 	}()
 
 	var seq uint64
+	// Some Chrome builds (headless on macOS) never emit screencast frames.
+	// If the first frame does not arrive in time, poll screenshots
+	// instead, so a live view works everywhere.
+	firstFrame := time.NewTimer(screencastFallbackAfter)
+	defer firstFrame.Stop()
+	var poll <-chan time.Time
+	var lastPoll [32]byte
 	for {
 		select {
 		case <-q.signal:
+		case <-firstFrame.C:
+			if seq == 0 {
+				p.b.logf("browser: no screencast frames after %v; polling screenshots", screencastFallbackAfter)
+				t := time.NewTicker(screencastPollInterval)
+				defer t.Stop()
+				poll = t.C
+			}
+			continue
+		case <-poll:
+			shotCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			data, err := p.Screenshot(shotCtx, format, 70)
+			cancel()
+			if err != nil {
+				if p.err() != nil {
+					return
+				}
+				continue
+			}
+			if sum := sha256.Sum256(data); sum != lastPoll {
+				lastPoll = sum
+				f := Frame{Data: data, Format: format, Timestamp: time.Now()}
+				if cfg, name, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+					f.Width, f.Height, f.Format = cfg.Width, cfg.Height, name
+				}
+				seq++
+				f.Seq = seq
+				deliverDropOldest(out, f)
+			}
+			continue
 		case <-sc.stopCh:
 			return
 		case <-ctx.Done():
@@ -193,6 +236,16 @@ func (p *Page) runScreencast(ctx context.Context, sc *screencast, q *frameQueue,
 		}
 	}
 }
+
+// screencastFallbackAfter is how long to wait for the first screencast
+// frame before polling screenshots; screencastPollInterval paces polling.
+var (
+	// dropScreencastEvents makes tests simulate a browser whose
+	// screencast never produces frames.
+	dropScreencastEvents    atomic.Bool
+	screencastFallbackAfter = 3 * time.Second
+	screencastPollInterval  = 100 * time.Millisecond
+)
 
 // deliverDropOldest sends f, discarding the oldest buffered frame when the
 // channel is full. It never blocks; it must be the channel's only sender.

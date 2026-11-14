@@ -25,6 +25,8 @@ import (
 const (
 	browserWidth  = 1280
 	browserHeight = 800
+	// browserLaunchTimeout bounds starting Chromium and opening its page.
+	browserLaunchTimeout = 3 * time.Minute
 )
 
 // browserHost owns the agent's browser: one Chromium launched on first
@@ -73,6 +75,13 @@ func (h *browserHost) driver(ctx context.Context) (browsertools.Driver, error) {
 	if h.page != nil {
 		return h.page, nil
 	}
+	// Launching is not bounded by one action's timeout: Chromium's first
+	// start on a cold machine (font cache, new profile) can take longer.
+	// If the action gives up first, the launch still finishes and the next
+	// call uses the browser.
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), browserLaunchTimeout)
+	defer cancel()
+	ctx = lctx
 	br, err := browser.Launch(ctx, browser.Options{
 		Headless: h.headless,
 		Width:    browserWidth,

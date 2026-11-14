@@ -849,3 +849,45 @@ func TestScrollFromScript(t *testing.T) {
 		t.Fatalf("page scrollY = %v", got)
 	}
 }
+
+// TestScreencastFallsBackToScreenshots simulates a browser whose
+// screencast never sends frames (headless Chrome on macOS): the stream
+// must switch to polled screenshots and keep delivering changing frames.
+func TestScreencastFallsBackToScreenshots(t *testing.T) {
+	b := launchForTest(t, Options{Width: 640, Height: 400})
+	dropScreencastEvents.Store(true)
+	old := screencastFallbackAfter
+	screencastFallbackAfter = 300 * time.Millisecond
+	t.Cleanup(func() { dropScreencastEvents.Store(false); screencastFallbackAfter = old })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	p, err := b.NewPage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, stop, err := p.StartScreencast(ctx, ScreencastOptions{Format: "jpeg", Quality: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	seen := map[uint64]bool{}
+	deadline := time.After(15 * time.Second)
+	for i := 0; len(seen) < 3; i++ {
+		if _, err := p.Evaluate(ctx, fmt.Sprintf(`document.body.style.background="rgb(%d,40,90)"`, (i*60)%255)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				t.Fatal("stream closed")
+			}
+			if len(f.Data) == 0 || f.Width != 640 || f.Height != 400 || f.Format != "jpeg" {
+				t.Fatalf("bad polled frame: %d bytes %dx%d %s", len(f.Data), f.Width, f.Height, f.Format)
+			}
+			seen[f.Seq] = true
+		case <-deadline:
+			t.Fatalf("only %d polled frames", len(seen))
+		}
+	}
+}

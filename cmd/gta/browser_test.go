@@ -62,6 +62,7 @@ func TestBrowserEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	warmUp(t, h)
 
 	run := func(name string, input any) string {
 		t.Helper()
@@ -130,6 +131,7 @@ func TestBrowserDockRendersFrames(t *testing.T) {
 	h := newBrowserHost(config.Config{})
 	defer h.close()
 	d := newBrowserDock(h)
+	warmUp(t, h)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if _, err := h.sess.Navigate(ctx, "about:blank"); err != nil {
@@ -184,3 +186,19 @@ func TestBrowserDockRendersFrames(t *testing.T) {
 
 var _ browserview.Source = (*browserHost)(nil)
 var _ browserview.Input = pageInput{}
+
+// warmUp launches the browser with a generous deadline before the tools
+// run with their per-action timeout: on a cold CI machine Chromium's
+// first start (font cache, profile) can take longer than one action may.
+func warmUp(t *testing.T, h *browserHost) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	start := time.Now()
+	if _, err := h.driver(ctx); err != nil {
+		t.Fatalf("start browser: %v", err)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Logf("browser took %v to start", d.Round(time.Second))
+	}
+}
