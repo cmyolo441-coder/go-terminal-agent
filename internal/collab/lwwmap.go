@@ -184,7 +184,7 @@ type MapEntryState struct {
 // LWWMapSnapshot is the full state of an LWWMap.
 type LWWMapSnapshot struct {
 	VV      VersionVector            `json:"vv"`
-	Base    VersionVector            `json:"base,omitempty"`
+	Base    VersionVector            `json:"base"`
 	Entries map[string]MapEntryState `json:"entries"`
 	Log     []MapOp                  `json:"log,omitempty"`
 }
@@ -209,7 +209,7 @@ func RestoreLWWMap(replica string, clock *Clock, s LWWMapSnapshot) (*LWWMap, err
 	m := NewLWWMap(replica, clock)
 	base := s.Base
 	if base == nil {
-		base = s.VV
+		base = VersionVector{}
 	}
 	if err := m.log.restore(s.VV, base, s.Log); err != nil {
 		return nil, err

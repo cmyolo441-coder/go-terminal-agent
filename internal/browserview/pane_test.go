@@ -64,7 +64,7 @@ func TestPaneHalfBlockView(t *testing.T) {
 	src := newFakeSource()
 	p := newTestPane(src, ProtocolHalfBlock)
 	defer p.Close()
-	p.SetSize(48, 16)
+	p.SetSize(64, 16)
 	p.SetOverlay(Overlay{URL: "https://example.com/path", Label: "click #submit", Status: "navigating"})
 	p.Focus()
 
@@ -91,7 +91,7 @@ func TestPaneHalfBlockView(t *testing.T) {
 		t.Fatalf("view has %d lines, want 16", len(lines))
 	}
 	for i, l := range lines {
-		if w := StringWidth(l); w != 48 {
+		if w := StringWidth(l); w != 64 {
 			t.Fatalf("line %d width %d: %q", i, w, l)
 		}
 	}

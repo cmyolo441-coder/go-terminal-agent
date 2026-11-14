@@ -110,9 +110,12 @@ func fingerprint(tool string, lower []byte) uint64 {
 	return h
 }
 
-// simhash computes a 64-bit SimHash over the word tokens of the lowered
-// target plus the tool name, and returns the number of tokens. Similar
-// inputs have hashes a small Hamming distance apart.
+// simhash computes a 64-bit SimHash over the word tokens (unigrams) and
+// adjacent token pairs (bigrams) of the lowered target plus the tool name,
+// and returns the number of unigram tokens. Bigrams make a changed token
+// weigh three features rather than one, which separates "same command,
+// different argument" from "same command, one extra flag". Similar inputs
+// have hashes a small Hamming distance apart.
 func simhash(tool string, lower []byte) (uint64, int) {
 	var acc [64]int32
 	add := func(h uint64) {
@@ -122,7 +125,8 @@ func simhash(tool string, lower []byte) (uint64, int) {
 			acc[b] += int32(h>>b&1)<<1 - 1
 		}
 	}
-	add(fnv64(tool))
+	prev := fnv64(tool)
+	add(prev)
 	n := 1
 	start := -1
 	for i := 0; i <= len(lower); i++ {
@@ -133,7 +137,10 @@ func simhash(tool string, lower []byte) (uint64, int) {
 			continue
 		}
 		if start >= 0 {
-			add(fnv64b(lower[start:i]))
+			h := fnv64b(lower[start:i])
+			add(h)
+			add(prev*0x9e3779b97f4a7c15 ^ h)
+			prev = h
 			n++
 			start = -1
 		}

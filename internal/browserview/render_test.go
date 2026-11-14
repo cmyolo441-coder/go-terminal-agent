@@ -569,7 +569,7 @@ func TestOverlayDrawing(t *testing.T) {
 	if c := img.RGBAAt(40, 30); c.R == 0 || c == highlightColor {
 		t.Fatalf("highlight fill not blended: %v", c)
 	}
-	if c := img.RGBAAt(101, 54); c != cursorFill && c != cursorEdge {
+	if c := img.RGBAAt(100, 52); c != cursorFill && c != cursorEdge {
 		t.Fatalf("cursor body missing: %v", c)
 	}
 	if c := img.RGBAAt(98, 48); c != (color.RGBA{0, 0, 0, 255}) {

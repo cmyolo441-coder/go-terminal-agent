@@ -221,7 +221,7 @@ func (s *Store) loadGeneration(ctx context.Context, man *manifest) error {
 		seg, err = parseSegment(data)
 	}
 	if err != nil {
-		if !s.opts.RecoverCorrupt || errors.Is(err, fs.ErrNotExist) && !s.opts.RecoverCorrupt {
+		if !s.opts.RecoverCorrupt {
 			return fmt.Errorf("memory: loading %s: %w", segPath, err)
 		}
 		s.log.Warn("memory: snapshot is damaged; salvaging", "file", segPath, "err", err)
@@ -451,11 +451,6 @@ func (s *Store) applyLogFrame(ctx context.Context, typ byte, payload []byte) err
 			// Written by a process with another embedder.
 			if err := s.reembed(ctx, []*storedRecord{sr}); err != nil {
 				return err
-			}
-		}
-		if old := s.byID[sr.Rec.ID]; old != nil && old.key != sr.Key {
-			if other := s.byKey[sr.Key]; other != nil {
-				sr.Key = s.allocKey()
 			}
 		}
 		return s.applyPut(sr)

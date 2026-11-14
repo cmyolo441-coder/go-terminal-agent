@@ -472,8 +472,12 @@ func (p *Pane) titleBar(iw int) string {
 	}
 	st := p.Stats()
 	right := fmt.Sprintf("%2.0f fps · %s", st.FPS, st.Protocol)
+	// The encode time is diagnostic: show it only when the URL still fits.
 	if st.EncodeTime > 0 {
-		right += fmt.Sprintf(" · %dms", st.EncodeTime.Milliseconds())
+		withMS := right + fmt.Sprintf(" · %dms", st.EncodeTime.Milliseconds())
+		if iw-StringWidth(withMS)-4 > StringWidth(url) {
+			right = withMS
+		}
 	}
 	dot := p.styles.accent.Render("●")
 	if p.err != nil {

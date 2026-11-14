@@ -179,7 +179,7 @@ func sortedDots(set map[Dot]struct{}) []Dot {
 // ORSetSnapshot is the full state of an ORSet.
 type ORSetSnapshot struct {
 	VV    VersionVector    `json:"vv"`
-	Base  VersionVector    `json:"base,omitempty"`
+	Base  VersionVector    `json:"base"`
 	Elems map[string][]Dot `json:"elems"`
 	Log   []SetOp          `json:"log,omitempty"`
 }
@@ -203,7 +203,7 @@ func RestoreORSet(replica string, snap ORSetSnapshot) (*ORSet, error) {
 	s := NewORSet(replica)
 	base := snap.Base
 	if base == nil {
-		base = snap.VV
+		base = VersionVector{}
 	}
 	if err := s.log.restore(snap.VV, base, snap.Log); err != nil {
 		return nil, err

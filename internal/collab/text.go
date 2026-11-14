@@ -632,7 +632,7 @@ type RunState struct {
 // start. Without a log, the snapshot cannot serve deltas to older peers.
 type TextSnapshot struct {
 	VV      VersionVector `json:"vv"`
-	Base    VersionVector `json:"base,omitempty"`
+	Base    VersionVector `json:"base"`
 	Lamport uint64        `json:"lamport"`
 	Runs    []RunState    `json:"runs"`
 	Log     []TextOp      `json:"log,omitempty"`
@@ -662,7 +662,7 @@ func RestoreText(replica string, s TextSnapshot) (*Text, error) {
 	t := NewText(replica)
 	base := s.Base
 	if base == nil {
-		base = s.VV
+		base = VersionVector{}
 	}
 	if err := t.log.restore(s.VV, base, s.Log); err != nil {
 		return nil, err
