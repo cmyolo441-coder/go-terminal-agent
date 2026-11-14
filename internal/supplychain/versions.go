@@ -234,6 +234,9 @@ func phpVersionCompare(a, b string) int {
 		return 1
 	}
 	ca, cb := phpCanonicalize(a), phpCanonicalize(b)
+	if ca == cb {
+		return 0
+	}
 	pa := strings.Split(ca, ".")
 	pb := strings.Split(cb, ".")
 	isNum := func(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
@@ -254,6 +257,12 @@ func phpVersionCompare(a, b string) int {
 	}
 	if compare == 0 {
 		switch {
+		case i < len(pa) && pa[i] == "" && i < len(pb) && pb[i] == "":
+			compare = 0
+		case i < len(pa) && pa[i] == "":
+			compare = -1 // C: php_version_compare("", ...) on an empty remainder
+		case i < len(pb) && pb[i] == "":
+			compare = 1
 		case i < len(pa):
 			if isNum(pa[i]) {
 				compare = 1

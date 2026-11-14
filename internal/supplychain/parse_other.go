@@ -71,6 +71,9 @@ func ParseCargoLock(file string, data []byte) (*Graph, error) {
 	for _, c := range crates {
 		for _, d := range c.deps {
 			f := strings.Fields(d)
+			if len(f) == 0 {
+				return nil, perr(file, 0, "Cargo.lock: package %s: empty dependency", c.name)
+			}
 			var match []crate
 			for _, o := range crates {
 				if o.name != f[0] {
