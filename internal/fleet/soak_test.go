@@ -73,10 +73,19 @@ func TestSoakWorkerCrashes(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Until minCrashes workers have crashed, no task may finish: the
+	// crashes then always hit in-flight work, however fast the machine.
+	const minCrashes = 5
+	chaosWarm := make(chan struct{})
 	var executions sync.Map // task -> *atomic.Int32
 	exec := ExecutorFunc(func(ctx context.Context, a Assignment) (json.RawMessage, error) {
 		v, _ := executions.LoadOrStore(a.Task.ID, new(atomic.Int32))
 		v.(*atomic.Int32).Add(1)
+		select {
+		case <-chaosWarm:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		select {
 		case <-time.After(time.Duration(mrand.IntN(3000)) * time.Microsecond):
 		case <-ctx.Done():
@@ -136,7 +145,9 @@ func TestSoakWorkerCrashes(t *testing.T) {
 			slotsMu.Unlock()
 			s.w.crash()
 			<-s.done
-			crashes.Add(1)
+			if crashes.Add(1) == minCrashes {
+				close(chaosWarm)
+			}
 			startWorker(i)
 		}
 	}()
@@ -155,7 +166,7 @@ func TestSoakWorkerCrashes(t *testing.T) {
 		<-s.done
 	}
 
-	if crashes.Load() < 5 {
+	if crashes.Load() < minCrashes {
 		t.Fatalf("only %d crashes; the soak test did not exercise failures", crashes.Load())
 	}
 	m := c.Metrics(context.Background())
