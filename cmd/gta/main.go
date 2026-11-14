@@ -63,6 +63,7 @@ func parseFlags(args []string) (flags, []string, error) {
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
+		writeSubcommandHelp(fs.Output())
 	}
 	fs.BoolVar(&f.print, "p", false, "print mode: run the prompt non-interactively and exit")
 	fs.BoolVar(&f.print, "print", false, "same as -p")
@@ -124,6 +125,11 @@ func main() {
 	}
 	if len(args) > 0 && args[0] == "version" {
 		run, args = runVersion, args[1:]
+	}
+	if len(args) > 0 {
+		if sc, ok := subcommands[args[0]]; ok {
+			run, args = sc.run, args[1:]
+		}
 	}
 	if err := run(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
