@@ -160,8 +160,10 @@ func TestShellRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// pwd may print the path as given (macOS: /var/...) or resolved
+	// (/private/var/...).
 	real, _ := filepath.EvalSymlinks(dir)
-	if res.ExitCode != 3 || !strings.Contains(res.Output, "hi") || !strings.Contains(res.Output, real) {
+	if res.ExitCode != 3 || !strings.Contains(res.Output, "hi") || (!strings.Contains(res.Output, real) && !strings.Contains(res.Output, dir)) {
 		t.Errorf("got %+v", res)
 	}
 	res, err = run(context.Background(), dir, "head -c 2000000 /dev/zero | tr '\\0' a")

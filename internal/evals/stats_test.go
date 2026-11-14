@@ -23,7 +23,9 @@ func TestMeanStdDev(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		big = append(big, 1e-8)
 	}
-	if !near(Mean(big)*float64(len(big)), 1e8+1e-5, 1e-9) {
+	// One ULP at 1e8 is ~1.5e-8, so allow a few; a naive sum is off by
+	// ~5e-6 (each 1e-8 rounds up to a full ULP), which this still catches.
+	if !near(Mean(big)*float64(len(big)), 1e8+1e-5, 1e-7) {
 		t.Errorf("compensated sum lost precision: %v", Mean(big)*float64(len(big)))
 	}
 }

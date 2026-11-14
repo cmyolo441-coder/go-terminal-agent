@@ -112,6 +112,44 @@ func Launch(ctx context.Context, opts Options) (*Browser, error) {
 		opts.Headless = true
 	}
 
+	noSandbox := runningAsRoot() || envTrue(os.Getenv(EnvNoSandbox))
+	b, err := launchOnce(ctx, opts, execPath, noSandbox, logf)
+	if err != nil && !noSandbox && sandboxUnavailable(err) {
+		// Some systems forbid the unprivileged user namespaces Chromium's
+		// sandbox needs (Ubuntu 24.04's AppArmor default, many
+		// containers) and ship no setuid helper. Chromium then aborts at
+		// startup. Retry without the sandbox rather than fail outright.
+		logf("browser: Chromium's sandbox is unavailable here; retrying with --no-sandbox (%s=1 skips the first attempt)", EnvNoSandbox)
+		b, err = launchOnce(ctx, opts, execPath, true, logf)
+	}
+	return b, err
+}
+
+// EnvNoSandbox, when "1" or "true", starts Chromium without its sandbox.
+const EnvNoSandbox = "GTA_BROWSER_NO_SANDBOX"
+
+func envTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// sandboxUnavailable reports whether a launch failed because Chromium
+// could not set up its sandbox.
+func sandboxUnavailable(err error) bool {
+	msg := err.Error()
+	for _, sig := range []string{"No usable sandbox", "ZygoteHostImpl", "zygote_host", "setuid sandbox", "credentials.cc", "Failed to move to new namespace"} {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// launchOnce starts one browser process and connects to it.
+func launchOnce(ctx context.Context, opts Options, execPath string, noSandbox bool, logf func(string, ...any)) (*Browser, error) {
 	b := &Browser{
 		opts:       opts,
 		logf:       logf,
@@ -130,7 +168,7 @@ func Launch(ctx context.Context, opts Options) (*Browser, error) {
 	}
 
 	usePipe := slices.Contains(opts.ExtraArgs, "--remote-debugging-pipe")
-	args := buildArgs(opts, usePipe, runningAsRoot())
+	args := buildArgs(opts, usePipe, noSandbox)
 
 	cmd := exec.Command(execPath, args...)
 	configureProcess(cmd)
@@ -247,7 +285,7 @@ func Launch(ctx context.Context, opts Options) (*Browser, error) {
 }
 
 // buildArgs assembles the command line.
-func buildArgs(opts Options, usePipe, root bool) []string {
+func buildArgs(opts Options, usePipe, noSandbox bool) []string {
 	args := []string{
 		"--no-first-run",
 		"--no-default-browser-check",
@@ -285,7 +323,7 @@ func buildArgs(opts Options, usePipe, root bool) []string {
 	if opts.Headless {
 		args = append(args, "--headless=new", "--disable-gpu", "--hide-scrollbars")
 	}
-	if root {
+	if noSandbox {
 		args = append(args, "--no-sandbox")
 	}
 	if !usePipe {

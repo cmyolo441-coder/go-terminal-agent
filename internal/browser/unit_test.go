@@ -341,3 +341,51 @@ func TestNetTracker(t *testing.T) {
 		t.Fatalf("inflight %d", c)
 	}
 }
+
+func TestEditingCommands(t *testing.T) {
+	cases := []struct {
+		goos string
+		mods int
+		code string
+		want []string
+	}{
+		{"darwin", ModMeta, "KeyA", []string{"selectAll"}},
+		{"darwin", ModControl, "KeyA", []string{"selectAll"}},
+		{"darwin", ModMeta | ModShift, "KeyZ", []string{"redo"}},
+		{"darwin", ModMeta, "KeyZ", []string{"undo"}},
+		{"darwin", ModMeta, "KeyV", []string{"paste"}},
+		{"darwin", 0, "KeyA", nil},
+		{"darwin", ModMeta | ModAlt, "KeyA", nil},
+		{"darwin", ModMeta, "KeyQ", nil},
+		{"linux", ModControl, "KeyA", nil},
+		{"windows", ModControl, "KeyA", nil},
+	}
+	for _, c := range cases {
+		if got := editingCommands(c.goos, c.mods, c.code); !slices.Equal(got, c.want) {
+			t.Errorf("editingCommands(%s, %d, %s) = %v, want %v", c.goos, c.mods, c.code, got, c.want)
+		}
+	}
+}
+
+func TestSandboxUnavailable(t *testing.T) {
+	for _, msg := range []string{
+		"browser: /usr/bin/chromium exited before DevTools was ready\n  #12 0x55 content::ZygoteHostImpl::Init()",
+		"No usable sandbox! Update your kernel or see https://chromium.googlesource.com/...",
+		"[FATAL:credentials.cc(127)] Check failed: . : Permission denied",
+	} {
+		if !sandboxUnavailable(errors.New(msg)) {
+			t.Errorf("not detected: %q", msg)
+		}
+	}
+	for _, msg := range []string{"cannot open display", "context deadline exceeded"} {
+		if sandboxUnavailable(errors.New(msg)) {
+			t.Errorf("false positive: %q", msg)
+		}
+	}
+	if !envTrue("1") || !envTrue(" TRUE ") || envTrue("0") || envTrue("") {
+		t.Error("envTrue")
+	}
+	if args := buildArgs(Options{Width: 1, Height: 1, UserDataDir: "/x"}, false, true); !slices.Contains(args, "--no-sandbox") {
+		t.Error("noSandbox did not add --no-sandbox")
+	}
+}

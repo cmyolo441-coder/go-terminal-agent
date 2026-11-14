@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -805,5 +806,46 @@ func TestLaunchFailures(t *testing.T) {
 
 	if _, err := Launch(ctx, Options{ExecPath: dir + "/missing", Headless: true}); err == nil {
 		t.Fatal("missing executable accepted")
+	}
+}
+
+// TestScrollFromScript checks the fallback Wheel uses when Chrome never
+// acknowledges a wheel event: it scrolls the scrollable box under the
+// point, or the page.
+func TestScrollFromScript(t *testing.T) {
+	b := launchForTest(t, Options{Width: 800, Height: 600})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	p, err := b.NewPage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := `<!doctype html><body style="margin:0;height:3000px">` +
+		`<div id=box style="overflow:auto;width:200px;height:100px"><div style="height:1000px"></div></div></body>`
+	if _, err := p.Evaluate(ctx, "document.open();document.write("+strconv.Quote(html)+");document.close()"); err != nil {
+		t.Fatal(err)
+	}
+	read := func(expr string) float64 {
+		raw, err := p.Evaluate(ctx, expr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, _ := strconv.ParseFloat(string(raw), 64)
+		return f
+	}
+	if err := p.scrollFromScript(ctx, 50, 50, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("document.getElementById('box').scrollTop"); got != 120 {
+		t.Fatalf("inner box scrollTop = %v", got)
+	}
+	if got := read("window.scrollY"); got != 0 {
+		t.Fatalf("page scrolled too: %v", got)
+	}
+	if err := p.scrollFromScript(ctx, 600, 400, 0, 250); err != nil {
+		t.Fatal(err)
+	}
+	if got := read("window.scrollY"); got != 250 {
+		t.Fatalf("page scrollY = %v", got)
 	}
 }

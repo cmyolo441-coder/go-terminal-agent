@@ -3,7 +3,9 @@ package browser
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -313,6 +315,9 @@ func (p *Page) KeyDown(ctx context.Context, key string) error {
 		"location":              d.Location,
 		"isKeypad":              d.Location == locNumpad,
 	}
+	if cmds := editingCommands(runtime.GOOS, p.in.modifiers, d.Code); len(cmds) > 0 {
+		params["commands"] = cmds
+	}
 	if err := p.call(ctx, "Input.dispatchKeyEvent", params, nil); err != nil {
 		return fmt.Errorf("browser: key down %q: %w", key, err)
 	}
@@ -456,12 +461,74 @@ func (p *Page) Wheel(ctx context.Context, x, y, dx, dy float64) error {
 		return fmt.Errorf("browser: wheel: %w", err)
 	}
 	defer p.in.mu.unlock()
-	err := p.dispatchMouse(ctx, map[string]any{
+	// Chrome acknowledges a wheel event only after the compositor has
+	// handled it; headless Chrome on macOS sometimes never does. Bound the
+	// wait and scroll from script instead, so callers never hang.
+	wctx, cancel := context.WithTimeout(ctx, wheelAckTimeout)
+	err := p.dispatchMouse(wctx, map[string]any{
 		"type": "mouseWheel", "x": x, "y": y, "deltaX": dx, "deltaY": dy,
 		"button": "none", "buttons": p.in.buttons,
 	})
+	timedOut := wctx.Err() != nil && ctx.Err() == nil
+	cancel()
+	if err != nil && timedOut {
+		err = p.scrollFromScript(ctx, x, y, dx, dy)
+	}
 	if err != nil {
 		return fmt.Errorf("browser: wheel: %w", err)
+	}
+	return nil
+}
+
+// wheelAckTimeout bounds how long Wheel waits for Chrome to acknowledge a
+// wheel event before falling back to scrolling from script.
+const wheelAckTimeout = 4 * time.Second
+
+// scrollFromScript scrolls the innermost scrollable element under (x, y),
+// or the page, by (dx, dy) — what the wheel event would have done.
+func (p *Page) scrollFromScript(ctx context.Context, x, y, dx, dy float64) error {
+	expr := fmt.Sprintf(`(() => {
+  const dx = %g, dy = %g;
+  const can = (n, axis) => {
+    const s = getComputedStyle(n);
+    return axis === "y"
+      ? n.scrollHeight > n.clientHeight && /(auto|scroll|overlay)/.test(s.overflowY)
+      : n.scrollWidth > n.clientWidth && /(auto|scroll|overlay)/.test(s.overflowX);
+  };
+  for (let n = document.elementFromPoint(%g, %g); n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    if ((dy && can(n, "y")) || (dx && can(n, "x"))) { n.scrollBy(dx, dy); return true; }
+  }
+  window.scrollBy(dx, dy);
+  return true;
+})()`, dx, dy, x, y)
+	_, err := p.Evaluate(ctx, expr)
+	return err
+}
+
+// editingCommands returns the editor commands a shortcut must carry on
+// macOS. There, synthesized key events never reach the native key
+// bindings, so Cmd+A (or Ctrl+A, which agents use on every platform)
+// would not select anything; Chrome runs the commands named in the event
+// instead. Other platforms handle the shortcuts natively.
+func editingCommands(goos string, mods int, code string) []string {
+	if goos != "darwin" || mods&(ModMeta|ModControl) == 0 || mods&ModAlt != 0 {
+		return nil
+	}
+	shift := mods&ModShift != 0
+	switch code {
+	case "KeyA":
+		return []string{"selectAll"}
+	case "KeyC":
+		return []string{"copy"}
+	case "KeyX":
+		return []string{"cut"}
+	case "KeyV":
+		return []string{"paste"}
+	case "KeyZ":
+		if shift {
+			return []string{"redo"}
+		}
+		return []string{"undo"}
 	}
 	return nil
 }
