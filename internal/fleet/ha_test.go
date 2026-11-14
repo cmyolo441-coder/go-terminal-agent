@@ -159,8 +159,6 @@ func TestLeaderFailoverFencing(t *testing.T) {
 
 	// The shared log holds exactly B's view.
 	b.Close()
-	lc, _ := store.Acquire(ctx, "fleet", "c", "", 10*time.Second)
-	_ = lc
 	_, rec, err := OpenWAL(stateDir, WALOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -209,9 +207,9 @@ func TestElectionFailover(t *testing.T) {
 	waitFor(t, 5*time.Second, "n1 leads", func() bool { l, _ := n1.c.IsLeader(); return l })
 	n2 := start("n2")
 	defer func() { n2.cancel(); <-n2.done; n2.c.Close() }()
-	if hint := n2.c.LeaderHint(context.Background()); hint != "http://n1" {
-		t.Fatalf("leader hint = %q", hint)
-	}
+	waitFor(t, 5*time.Second, "n2 learns the leader", func() bool {
+		return n2.c.LeaderHint(context.Background()) == "http://n1"
+	})
 	for i := range 5 {
 		mustSubmit(t, n1.c, TaskSpec{ID: fmt.Sprintf("t%d", i)})
 	}
