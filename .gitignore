@@ -1,7 +1,0 @@
-/gta
-/bin/
-/dist/
-*.test
-*.out
-.gta/sessions/
-.env
